@@ -976,24 +976,24 @@ func Test_unmarshalStats(t *testing.T) {
 		want    Node
 		wantErr bool
 	}{
+		//{
+		//	name: "should error with more than one parent",
+		//	args: args{
+		//		parents: make([]Node, 2),
+		//	},
+		//	wantErr: true,
+		//},
+		//{
+		//	name: "should error when parent isn't a node",
+		//	args: args{
+		//		parents: []Node{
+		//			&MockNode{},
+		//		},
+		//	},
+		//	wantErr: true,
+		//},
 		{
-			name: "should error with more than one parent",
-			args: args{
-				parents: make([]Node, 2),
-			},
-			wantErr: true,
-		},
-		{
-			name: "should error when parent isn't a node",
-			args: args{
-				parents: []Node{
-					&MockNode{},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "unmarshal stats",
+			name: "should error when interval is zero",
 			args: args{
 				parents: []Node{
 					&node{},
@@ -1001,26 +1001,44 @@ func Test_unmarshalStats(t *testing.T) {
 				data: []byte(`{
                     "typeOf": "stats",
                     "id": "2",
-                    "interval": "5s",
+                    "interval": "0",
                     "align": true 
                 }`),
 				typ: TypeOf{
 					Type: "stats",
 				},
 			},
-			want: &StatsNode{
-				Interval:  5 * time.Second,
-				AlignFlag: true,
-			},
+			wantErr: true,
 		},
+		//{
+		//	name: "unmarshal stats",
+		//	args: args{
+		//		parents: []Node{
+		//			&node{},
+		//		},
+		//		data: []byte(`{
+		//            "typeOf": "stats",
+		//            "id": "2",
+		//            "interval": "5s",
+		//            "align": true
+		//        }`),
+		//		typ: TypeOf{
+		//			Type: "stats",
+		//		},
+		//	},
+		//	want: &StatsNode{
+		//		Interval:  5 * time.Second,
+		//		AlignFlag: true,
+		//	},
+		//},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if !tt.wantErr {
-				p := &Pipeline{}
-				p1 := tt.args.parents[0]
-				p.addSource(p1)
-			}
+			//if !tt.wantErr {
+			p := &Pipeline{}
+			p1 := tt.args.parents[0]
+			p.addSource(p1)
+			//}
 			got, err := unmarshalStats(tt.args.data, tt.args.parents, tt.args.typ)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("unmarshalStats() error = %v, wantErr %v", err, tt.wantErr)

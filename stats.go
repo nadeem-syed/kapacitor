@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/influxdata/kapacitor/edge"
 	"github.com/influxdata/kapacitor/pipeline"
 )
@@ -41,7 +43,11 @@ func (n *StatsNode) runStats([]byte) error {
 		// Wait till we are roughly aligned with the interval.
 		now := time.Now()
 		next := now.Truncate(n.s.Interval).Add(n.s.Interval)
-		after := time.NewTicker(next.Sub(now))
+		dur := next.Sub(now)
+		if dur <= 0 { // this can happen during a time-changeover like a leap second, or if something is messing about with the system
+			errors.New("alignment interval should be positive but was not")
+		}
+		after := time.NewTicker(dur)
 		select {
 		case <-after.C:
 			after.Stop()
@@ -52,6 +58,9 @@ func (n *StatsNode) runStats([]byte) error {
 		if err := n.emit(now); err != nil {
 			return err
 		}
+	}
+	if n.s.Interval <= 0 {
+		errors.New("stats interval should be positive but was not")
 	}
 	ticker := time.NewTicker(n.s.Interval)
 	defer ticker.Stop()
