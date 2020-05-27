@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -15,6 +16,7 @@ const backupExt = ".orig"
 
 var writeFlag = flag.Bool("w", false, "write formatted contents to source file instead of STDOUT.")
 var backupFlag = flag.Bool("b", false, fmt.Sprintf("create backup files with extension '%s'.", backupExt))
+var listFlag = flag.Bool("l", false, "list files whose formatting differs from tickfmt's")
 
 func usage() {
 	message := `Usage: %s [options] [path...]
@@ -41,14 +43,14 @@ func main() {
 	}
 	for _, path := range args {
 		path = filepath.Clean(path)
-		err := formatFile(path, *writeFlag, *backupFlag)
+		err := formatFile(path, *writeFlag, *backupFlag, *listFlag)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
 }
 
-func formatFile(filename string, write, backup bool) error {
+func formatFile(filename string, write, backup, list bool) error {
 	data, err := readFile(filename)
 	if err != nil {
 		return err
@@ -57,24 +59,30 @@ func formatFile(filename string, write, backup bool) error {
 	if err != nil {
 		return err
 	}
-	if write {
-		dir := filepath.Dir(filename)
-		tmp, err := writeTmpFile(dir, formatted)
-		if err != nil {
-			return err
+	if !bytes.Equal([]byte(data), []byte(formatted)) {
+		if list {
+			fmt.Fprintln(os.Stdout, filename)
 		}
-		defer os.Remove(tmp)
-		if backup {
-			err := os.Rename(filename, filename+backupExt)
+		if write {
+			dir := filepath.Dir(filename)
+			tmp, err := writeTmpFile(dir, formatted)
+			if err != nil {
+				return err
+			}
+			defer os.Remove(tmp)
+			if backup {
+				err := os.Rename(filename, filename+backupExt)
+				if err != nil {
+					return err
+				}
+			}
+			err = os.Rename(tmp, filename)
 			if err != nil {
 				return err
 			}
 		}
-		err = os.Rename(tmp, filename)
-		if err != nil {
-			return err
-		}
-	} else {
+	}
+	if !list && !write {
 		_, err := os.Stdout.Write([]byte(formatted))
 		if err != nil {
 			return err
