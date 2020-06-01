@@ -56,6 +56,11 @@ required = [
   name= "github.com/BurntSushi/toml"
   revision = "a368813c5e648fee92e5f6c30e3944ff9d5e8895"
 
+[[constraint]]
+  branch = "addsns"
+  name = "github.com/influxdata/kapacitor"
+  source = "github.com/wpengine/kapacitor"
+
 # Force the Azure projects to be a specific older version that Prometheus needs
 [[override]]
   name = "github.com/Azure/azure-sdk-for-go"
