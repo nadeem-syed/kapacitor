@@ -15,6 +15,7 @@ import (
 	"github.com/influxdata/kapacitor/services/alert"
 	"github.com/influxdata/kapacitor/services/alerta"
 	"github.com/influxdata/kapacitor/services/azure"
+	"github.com/influxdata/kapacitor/services/bigpanda"
 	"github.com/influxdata/kapacitor/services/config"
 	"github.com/influxdata/kapacitor/services/consul"
 	"github.com/influxdata/kapacitor/services/deadman"
@@ -44,6 +45,7 @@ import (
 	"github.com/influxdata/kapacitor/services/scraper"
 	"github.com/influxdata/kapacitor/services/sensu"
 	"github.com/influxdata/kapacitor/services/serverset"
+	"github.com/influxdata/kapacitor/services/servicenow"
 	"github.com/influxdata/kapacitor/services/slack"
 	"github.com/influxdata/kapacitor/services/smtp"
 	"github.com/influxdata/kapacitor/services/snmptrap"
@@ -88,6 +90,7 @@ type Config struct {
 
 	// Alert handlers
 	Alerta     alerta.Config     `toml:"alerta" override:"alerta"`
+	BigPanda   bigpanda.Config   `toml:"bigpanda" override:"bigpanda"`
 	Discord    discord.Configs   `toml:"discord" override:"discord,element-key=workspace"`
 	HipChat    hipchat.Config    `toml:"hipchat" override:"hipchat"`
 	Kafka      kafka.Configs     `toml:"kafka" override:"kafka,element-key=id"`
@@ -101,6 +104,7 @@ type Config struct {
 	SMTP       smtp.Config       `toml:"smtp" override:"smtp"`
 	SNMPTrap   snmptrap.Config   `toml:"snmptrap" override:"snmptrap"`
 	Sensu      sensu.Config      `toml:"sensu" override:"sensu"`
+	ServiceNow servicenow.Config `toml:"servicenow" override:"servicenow"`
 	Slack      slack.Configs     `toml:"slack" override:"slack,element-key=workspace"`
 	Talk       talk.Config       `toml:"talk" override:"talk"`
 	Teams      teams.Config      `toml:"teams" override:"teams"`
@@ -159,6 +163,7 @@ func NewConfig() *Config {
 	c.OpenTSDB = opentsdb.NewConfig()
 
 	c.Alerta = alerta.NewConfig()
+	c.BigPanda = bigpanda.NewConfig()
 	c.Discord = discord.Configs{discord.NewDefaultConfig()}
 	c.HipChat = hipchat.NewConfig()
 	c.Kafka = kafka.Configs{kafka.NewConfig()}
@@ -171,6 +176,7 @@ func NewConfig() *Config {
 	c.HTTPPost = httppost.Configs{httppost.NewConfig()}
 	c.SMTP = smtp.NewConfig()
 	c.Sensu = sensu.NewConfig()
+	c.ServiceNow = servicenow.NewConfig()
 	c.Slack = slack.Configs{slack.NewDefaultConfig()}
 	c.Talk = talk.NewConfig()
 	c.Teams = teams.NewConfig()
@@ -278,6 +284,9 @@ func (c *Config) Validate() error {
 	if err := c.Alerta.Validate(); err != nil {
 		return errors.Wrap(err, "alerta")
 	}
+	if err := c.BigPanda.Validate(); err != nil {
+		return errors.Wrap(err, "bigpanda")
+	}
 	if err := c.Discord.Validate(); err != nil {
 		return err
 	}
@@ -316,6 +325,9 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Sensu.Validate(); err != nil {
 		return errors.Wrap(err, "sensu")
+	}
+	if err := c.ServiceNow.Validate(); err != nil {
+		return errors.Wrap(err, "servicenow")
 	}
 	if err := c.Slack.Validate(); err != nil {
 		return errors.Wrap(err, "slack")

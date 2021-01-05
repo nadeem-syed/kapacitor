@@ -41,6 +41,8 @@ import (
 	"github.com/influxdata/kapacitor/services/alert/alerttest"
 	"github.com/influxdata/kapacitor/services/alerta"
 	"github.com/influxdata/kapacitor/services/alerta/alertatest"
+	"github.com/influxdata/kapacitor/services/bigpanda"
+	"github.com/influxdata/kapacitor/services/bigpanda/bigpandatest"
 	"github.com/influxdata/kapacitor/services/diagnostic"
 	"github.com/influxdata/kapacitor/services/hipchat"
 	"github.com/influxdata/kapacitor/services/hipchat/hipchattest"
@@ -62,6 +64,8 @@ import (
 	"github.com/influxdata/kapacitor/services/pushover/pushovertest"
 	"github.com/influxdata/kapacitor/services/sensu"
 	"github.com/influxdata/kapacitor/services/sensu/sensutest"
+	"github.com/influxdata/kapacitor/services/servicenow"
+	"github.com/influxdata/kapacitor/services/servicenow/servicenowtest"
 	"github.com/influxdata/kapacitor/services/sideload"
 	"github.com/influxdata/kapacitor/services/slack"
 	"github.com/influxdata/kapacitor/services/slack/slacktest"
@@ -3370,6 +3374,154 @@ stream
 	}
 }
 
+func TestStream_HttpPost_URL_Template(t *testing.T) {
+	requestCount := int32(0)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result := models.Result{}
+		dec := json.NewDecoder(r.Body)
+		err := dec.Decode(&result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		atomic.AddInt32(&requestCount, 1)
+		rc := atomic.LoadInt32(&requestCount)
+
+		er := struct {
+			models.Result
+			url string
+		}{}
+		switch rc {
+		case 1:
+			er.Result = models.Result{
+				Series: models.Rows{
+					{
+						Name:    "cpu",
+						Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "a"},
+						Columns: []string{"time", "value"},
+						Values: [][]interface{}{[]interface{}{
+							time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC),
+							97.1,
+						}},
+					},
+				},
+			}
+			er.url = `/cpu/?host=serverA&cpu=a`
+		case 2:
+			er.Result = models.Result{
+				Series: models.Rows{
+					{
+						Name:    "cpu",
+						Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "b"},
+						Columns: []string{"time", "value"},
+						Values: [][]interface{}{[]interface{}{
+							time.Date(1971, 1, 1, 0, 0, 1, 0, time.UTC),
+							92.6,
+						}},
+					},
+				},
+			}
+			er.url = `/cpu/?host=serverA&cpu=b`
+		case 3:
+			er.Result = models.Result{
+				Series: models.Rows{
+					{
+						Name:    "cpu",
+						Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "b"},
+						Columns: []string{"time", "value"},
+						Values: [][]interface{}{[]interface{}{
+							time.Date(1971, 1, 1, 0, 0, 2, 0, time.UTC),
+							95.6,
+						}},
+					},
+				},
+			}
+			er.url = `/cpu/?host=serverA&cpu=b`
+		case 4:
+			er.Result = models.Result{
+				Series: models.Rows{
+					{
+						Name:    "cpu",
+						Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "c"},
+						Columns: []string{"time", "value"},
+						Values: [][]interface{}{[]interface{}{
+							time.Date(1971, 1, 1, 0, 0, 3, 0, time.UTC),
+							93.1,
+						}},
+					},
+				},
+			}
+			er.url = `/cpu/?host=serverA&cpu=c`
+		case 5:
+			er.Result = models.Result{
+				Series: models.Rows{
+					{
+						Name:    "cpu",
+						Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "c"},
+						Columns: []string{"time", "value"},
+						Values: [][]interface{}{[]interface{}{
+							time.Date(1971, 1, 1, 0, 0, 4, 0, time.UTC),
+							92.6,
+						}},
+					},
+				},
+			}
+			er.url = `/cpu/?host=serverA&cpu=c`
+		case 6:
+			er.Result = models.Result{
+				Series: models.Rows{
+					{
+						Name:    "cpu",
+						Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "a"},
+						Columns: []string{"time", "value"},
+						Values: [][]interface{}{[]interface{}{
+							time.Date(1971, 1, 1, 0, 0, 5, 0, time.UTC),
+							95.8,
+						}},
+					},
+				},
+			}
+			er.url = `/cpu/?host=serverA&cpu=a`
+		}
+		if eq, msg := compareResults(er.Result, result); !eq {
+			t.Errorf("unexpected alert data for request: %d %s", rc, msg)
+		}
+		if er.url != r.URL.String() {
+			t.Errorf("enexpected url for data, expected: %s  got: %s", er.url, r.URL.String())
+		}
+	}))
+	defer ts.Close()
+
+	var script = `
+stream
+	|from()
+		.measurement('cpu')
+		.where(lambda: "host" == 'serverA')
+		.groupBy('host')
+	|httpPost('` + ts.URL + `/{{ .Name }}/?host={{ index .Tags "host"}}&cpu={{ index .Tags "cpu" }}')
+	|httpOut('TestStream_HttpPost_URL_Template')
+`
+
+	er := models.Result{
+		Series: models.Rows{
+			{
+				Name:    "cpu",
+				Tags:    map[string]string{"host": "serverA", "type": "idle", "cpu": "a"},
+				Columns: []string{"time", "value"},
+				Values: [][]interface{}{[]interface{}{
+					time.Date(1971, 1, 1, 0, 0, 5, 0, time.UTC),
+					95.8,
+				}},
+			},
+		},
+	}
+
+	testStreamerWithOutput(t, "TestStream_HttpPost_URL_Template", script, 13*time.Second, er, false, nil)
+
+	if rc := atomic.LoadInt32(&requestCount); rc != 6 {
+		t.Errorf("got %v exp %v", rc, 6)
+	}
+}
+
 func TestStream_HttpPostEndpoint(t *testing.T) {
 	headers := map[string]string{"my": "header"}
 	requestCount := int32(0)
@@ -3510,7 +3662,7 @@ stream
 
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := httppost.Config{}
-		c.URL = ts.URL
+		c.URLTemplate = ts.URL
 		c.Endpoint = "test"
 		sl, _ := httppost.NewService(httppost.Configs{c}, diagService.NewHTTPPostHandler())
 		tm.HTTPPostService = sl
@@ -3589,7 +3741,7 @@ stream
 
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := httppost.Config{}
-		c.URL = ts.URL
+		c.URLTemplate = ts.URL
 		c.Endpoint = "test"
 		c.RowTemplate = `{{.Name}} host={{index .Tags "host"}} type={{index .Tags "type"}}{{range .Values}} {{index . "time"}} {{index . "value"}}{{end}}`
 		sl, _ := httppost.NewService(httppost.Configs{c}, diagService.NewHTTPPostHandler())
@@ -3693,7 +3845,7 @@ stream
 
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := httppost.Config{}
-		c.URL = ts.URL
+		c.URLTemplate = ts.URL
 		c.Endpoint = "test"
 		sl, _ := httppost.NewService(httppost.Configs{c}, diagService.NewHTTPPostHandler())
 		tm.HTTPPostService = sl
@@ -8937,6 +9089,7 @@ stream
 			.group('{{ .ID }}')
 			.value('{{ index .Fields "count" }}')
 			.services('serviceA', 'serviceB', '{{ .Name }}')
+			.correlated('{{ .Name }}')
 `
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := alerta.NewConfig()
@@ -8960,6 +9113,7 @@ stream
 				Text:        "kapacitor/cpu/serverA is CRITICAL @1971-01-01 00:00:10 +0000 UTC",
 				Origin:      "Kapacitor",
 				Service:     []string{"cpu"},
+				Correlate:   []string{"cpu"},
 				Timeout:     3600,
 			},
 		},
@@ -8974,6 +9128,7 @@ stream
 				Text:        "kapacitor/cpu/serverA is CRITICAL @1971-01-01 00:00:10 +0000 UTC",
 				Origin:      "override",
 				Service:     []string{"serviceA", "serviceB", "cpu"},
+				Correlate:   []string{"cpu"},
 				Value:       "10",
 				Timeout:     86400,
 			},
@@ -9064,6 +9219,105 @@ stream
 						Timestamp:   "",
 					},
 				},
+			},
+		},
+	}
+
+	ts.Close()
+	var got []interface{}
+	for _, g := range ts.Requests() {
+		got = append(got, g)
+	}
+
+	if err := compareListIgnoreOrder(got, exp, nil); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestStream_AlertBigPanda(t *testing.T) {
+	ts := bigpandatest.NewServer()
+	defer ts.Close()
+
+	var script = `
+stream
+	|from()
+		.measurement('cpu')
+		.where(lambda: "host" == 'serverA')
+		.groupBy('host')
+	|window()
+		.period(10s)
+		.every(10s)
+	|count('value')
+	|alert()
+		.id('kapacitor/{{ .Name }}/{{ index .Tags "host" }}')
+		.message('kapacitor/{{ .Name }}/{{ index .Tags "host" }} is {{ .Level }} @{{.Time}}')
+		.details('https://example.org/link')
+		.info(lambda: "count" > 6.0)
+		.warn(lambda: "count" > 7.0)
+		.crit(lambda: "count" > 8.0)
+		.bigPanda()
+			.AppKey('111111')
+		.bigPanda()
+			.AppKey('222222')
+		.bigPanda()
+`
+	tmInit := func(tm *kapacitor.TaskMaster) {
+
+		c := bigpanda.NewConfig()
+		c.Enabled = true
+		c.AppKey = "XXXXXXX"
+		c.Token = "testtoken1231234"
+		c.URL = ts.URL + "/test/bigpanda/url"
+
+		d := diagService.NewBigPandaHandler().WithContext(keyvalue.KV("test", "111"))
+		sl, err := bigpanda.NewService(c, d)
+		if err != nil {
+			t.Error(err)
+		}
+
+		tm.BigPandaService = sl
+	}
+
+	testStreamerNoOutput(t, "TestStream_Alert", script, 13*time.Second, tmInit)
+
+	exp := []interface{}{
+		bigpandatest.Request{
+			URL: "/test/bigpanda/url",
+			PostData: bigpandatest.PostData{
+				Check:       "kapacitor/cpu/serverA",
+				Description: "kapacitor/cpu/serverA is CRITICAL @1971-01-01 00:00:10 +0000 UTC",
+				AppKey:      "111111",
+				Status:      "critical",
+				Host:        "serverA",
+				Timestamp:   31536010,
+				Task:        "TestStream_Alert:cpu",
+				Details:     "https://example.org/link",
+			},
+		},
+		bigpandatest.Request{
+			URL: "/test/bigpanda/url",
+			PostData: bigpandatest.PostData{
+				Check:       "kapacitor/cpu/serverA",
+				Description: "kapacitor/cpu/serverA is CRITICAL @1971-01-01 00:00:10 +0000 UTC",
+				AppKey:      "222222",
+				Status:      "critical",
+				Host:        "serverA",
+				Timestamp:   31536010,
+				Task:        "TestStream_Alert:cpu",
+				Details:     "https://example.org/link",
+			},
+		},
+		bigpandatest.Request{
+			URL: "/test/bigpanda/url",
+			PostData: bigpandatest.PostData{
+				Check:       "kapacitor/cpu/serverA",
+				Description: "kapacitor/cpu/serverA is CRITICAL @1971-01-01 00:00:10 +0000 UTC",
+				AppKey:      "XXXXXXX",
+				Status:      "critical",
+				Host:        "serverA",
+				Timestamp:   31536010,
+				Task:        "TestStream_Alert:cpu",
+				Details:     "https://example.org/link",
 			},
 		},
 	}
@@ -9270,6 +9524,7 @@ stream
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := opsgenie2.NewConfig()
 		c.Enabled = true
+		c.Details = false
 		c.URL = ts.URL
 		c.APIKey = "api_key"
 		og := opsgenie2.NewService(c, diagService.NewOpsGenie2Handler())
@@ -9357,6 +9612,7 @@ stream
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := opsgenie2.NewConfig()
 		c.Enabled = true
+		c.Details = false
 		c.URL = ts.URL
 		c.RecoveryAction = "notes"
 		c.APIKey = "api_key"
@@ -9799,7 +10055,7 @@ stream
 `
 	tmInit := func(tm *kapacitor.TaskMaster) {
 		c := httppost.Config{}
-		c.URL = ts.URL
+		c.URLTemplate = ts.URL
 		c.Endpoint = "test"
 		c.Headers = headers
 		sl, _ := httppost.NewService(httppost.Configs{c}, diagService.NewHTTPPostHandler())
@@ -10115,6 +10371,92 @@ stream
 	}
 }
 
+func TestStream_AlertServiceNow(t *testing.T) {
+	ts := servicenowtest.NewServer()
+	defer ts.Close()
+
+	var script = `
+stream
+	|from()
+		.measurement('cpu')
+		.where(lambda: "host" == 'serverA')
+		.groupBy('host', 'type')
+	|window()
+		.period(10s)
+		.every(10s)
+	|mean('value')
+	|alert()
+		.id('kapacitor/{{ .Name }}/{{ index .Tags "host" }}')
+		.info(lambda: "mean" > 15.0)
+		.warn(lambda: "mean" > 50.0)
+		.crit(lambda: "mean" > 90.0)
+		.serviceNow()
+		.serviceNow()
+			.node('{{ index .Tags "host" }}')
+			.type('CPU')
+			.resource('CPU-Total')
+			.metricName('{{ index .Tags "type" }}')
+			.messageKey('Alert: {{ .ID }}')
+			.additionalInfo('link', 'http://push/alert?id={{ .ID }}')
+			.additionalInfo('ticks', 666)
+`
+	tmInit := func(tm *kapacitor.TaskMaster) {
+
+		c := servicenow.NewConfig()
+		c.Enabled = true
+		c.URL = ts.URL + "/api/global/em/jsonv2"
+		c.Source = "Kapacitor"
+		sl := servicenow.NewService(c, diagService.NewServiceNowHandler())
+		tm.ServiceNowService = sl
+	}
+
+	testStreamerNoOutput(t, "TestStream_Alert", script, 13*time.Second, tmInit)
+
+	exp := []interface{}{
+		servicenowtest.Request{
+			URL: "/api/global/em/jsonv2",
+			Alerts: servicenow.Events{
+				Records: []servicenow.Event{
+					{
+						Source:         "Kapacitor",
+						Node:           "serverA",
+						Type:           "CPU",       // literal since there is no tag for this in the testdata
+						Resource:       "CPU-Total", // literal since there is no tag for this in the testdata
+						MetricName:     "idle",
+						MessageKey:     "Alert: kapacitor/cpu/serverA",
+						Severity:       "1",
+						Description:    "kapacitor/cpu/serverA is CRITICAL",
+						AdditionalInfo: "{\"link\":\"http://push/alert?id=kapacitor/cpu/serverA\",\"ticks\":\"666\"}",
+					},
+				},
+			},
+		},
+		servicenowtest.Request{
+			URL: "/api/global/em/jsonv2",
+			Alerts: servicenow.Events{
+				Records: []servicenow.Event{
+					{
+						Source:      "Kapacitor",
+						MessageKey:  "kapacitor/cpu/serverA",
+						Severity:    "1",
+						Description: "kapacitor/cpu/serverA is CRITICAL",
+					},
+				},
+			},
+		},
+	}
+
+	ts.Close()
+	var got []interface{}
+	for _, g := range ts.Requests() {
+		got = append(got, g)
+	}
+
+	if err := compareListIgnoreOrder(got, exp, nil); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestStream_AlertLog(t *testing.T) {
 	tmpDir, err := ioutil.TempDir("", "TestStream_AlertLog")
 	if err != nil {
@@ -10413,6 +10755,7 @@ stream
 		.info(lambda: "count" > 6.0)
 		.warn(lambda: "count" > 7.0)
 		.crit(lambda: "count" > 8.0)
+		.details('{{ "here" }}/{{ .Name }}')
 		.snmpTrap('1.1.1')
 			.data('1.1.1.2', 'c', '1')
 			.data('1.1.1.2', 's', 'SNMP ALERT')
@@ -10421,6 +10764,7 @@ stream
 			.data('1.1.2.3', 'i', '10')
 			.data('1.1.2.3', 'n', '')
 			.data('1.1.2.3', 't', '20000')
+			.data('1.1.2.3', 's', '{{ .Details }}')
 `
 
 	expTraps := []interface{}{
@@ -10486,6 +10830,11 @@ stream
 						Oid:   "1.1.2.3",
 						Value: "20000",
 						Type:  "TimeTicks",
+					},
+					{
+						Oid:   "1.1.2.3",
+						Value: "here/cpu",
+						Type:  "OctetString",
 					},
 				},
 			},
@@ -10955,7 +11304,7 @@ func TestStream_Autoscale(t *testing.T) {
 			},
 			setup: func(tm *kapacitor.TaskMaster) context.Context {
 				scaleUpdates := make(chan k8s.Scale, 100)
-				ctx := context.WithValue(nil, "updates", scaleUpdates)
+				ctx := context.WithValue(context.Background(), "updates", scaleUpdates)
 				k8sAutoscale := k8stest.Client{}
 				k8sAutoscale.ScalesGetFunc = func(kind, name string) (*k8s.Scale, error) {
 					var replicas int32
@@ -11051,7 +11400,7 @@ func TestStream_Autoscale(t *testing.T) {
 			},
 			setup: func(tm *kapacitor.TaskMaster) context.Context {
 				serviceUpdates := make(chan swarm.Service, 100)
-				ctx := context.WithValue(nil, "updates", serviceUpdates)
+				ctx := context.WithValue(context.Background(), "updates", serviceUpdates)
 				swarmAutoscale := swarmtest.Client{}
 				swarmAutoscale.ServiceFunc = func(name string) (*swarm.Service, error) {
 					var replicas uint64

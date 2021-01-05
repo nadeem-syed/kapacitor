@@ -17,6 +17,7 @@ import (
 	"github.com/influxdata/kapacitor/models"
 	alertservice "github.com/influxdata/kapacitor/services/alert"
 	"github.com/influxdata/kapacitor/services/alerta"
+	"github.com/influxdata/kapacitor/services/bigpanda"
 	"github.com/influxdata/kapacitor/services/discord"
 	"github.com/influxdata/kapacitor/services/ec2"
 	"github.com/influxdata/kapacitor/services/hipchat"
@@ -31,6 +32,7 @@ import (
 	"github.com/influxdata/kapacitor/services/pagerduty2"
 	"github.com/influxdata/kapacitor/services/pushover"
 	"github.com/influxdata/kapacitor/services/sensu"
+	"github.com/influxdata/kapacitor/services/servicenow"
 	"github.com/influxdata/kapacitor/services/sideload"
 	"github.com/influxdata/kapacitor/services/slack"
 	"github.com/influxdata/kapacitor/services/smtp"
@@ -622,6 +624,32 @@ func (h *DiscordHandler) WithContext(ctx ...keyvalue.T) discord.Diagnostic {
 	fields := logFieldsFromContext(ctx)
 
 	return &DiscordHandler{
+		l: h.l.With(fields...),
+	}
+}
+
+// BigPanda Handler
+
+type BigPandaHandler struct {
+	l Logger
+}
+
+func (h *BigPandaHandler) InsecureSkipVerify() {
+	h.l.Info("service is configured to skip ssl verification")
+}
+
+func (h *BigPandaHandler) Error(msg string, err error) {
+	h.l.Error(msg, Error(err))
+}
+
+func (h *BigPandaHandler) TemplateError(err error, kv keyvalue.T) {
+	h.l.Error("failed to evaluate BigPanda template", Error(err), String(kv.Key, kv.Value))
+}
+
+func (h *BigPandaHandler) WithContext(ctx ...keyvalue.T) bigpanda.Diagnostic {
+	fields := logFieldsFromContext(ctx)
+
+	return &BigPandaHandler{
 		l: h.l.With(fields...),
 	}
 }
@@ -1354,5 +1382,22 @@ func (h *TeamsHandler) WithContext(ctx ...keyvalue.T) teams.Diagnostic {
 }
 
 func (h *TeamsHandler) Error(msg string, err error) {
+	h.l.Error(msg, Error(err))
+}
+
+// ServiceNow handler
+type ServiceNowHandler struct {
+	l Logger
+}
+
+func (h *ServiceNowHandler) WithContext(ctx ...keyvalue.T) servicenow.Diagnostic {
+	fields := logFieldsFromContext(ctx)
+
+	return &ServiceNowHandler{
+		l: h.l.With(fields...),
+	}
+}
+
+func (h *ServiceNowHandler) Error(msg string, err error) {
 	h.l.Error(msg, Error(err))
 }

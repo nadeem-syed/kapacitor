@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/influxdata/kapacitor/services/discord/discordtest"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -38,6 +37,8 @@ import (
 	"github.com/influxdata/kapacitor/server"
 	"github.com/influxdata/kapacitor/services/alert/alerttest"
 	"github.com/influxdata/kapacitor/services/alerta/alertatest"
+	"github.com/influxdata/kapacitor/services/bigpanda/bigpandatest"
+	"github.com/influxdata/kapacitor/services/discord/discordtest"
 	"github.com/influxdata/kapacitor/services/hipchat/hipchattest"
 	"github.com/influxdata/kapacitor/services/httppost"
 	"github.com/influxdata/kapacitor/services/httppost/httpposttest"
@@ -55,6 +56,8 @@ import (
 	"github.com/influxdata/kapacitor/services/pagerduty2/pagerduty2test"
 	"github.com/influxdata/kapacitor/services/pushover/pushovertest"
 	"github.com/influxdata/kapacitor/services/sensu/sensutest"
+	"github.com/influxdata/kapacitor/services/servicenow"
+	"github.com/influxdata/kapacitor/services/servicenow/servicenowtest"
 	"github.com/influxdata/kapacitor/services/slack"
 	"github.com/influxdata/kapacitor/services/slack/slacktest"
 	"github.com/influxdata/kapacitor/services/smtp/smtptest"
@@ -6346,6 +6349,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 						"startup-timeout":             "1h0m0s",
 						"subscription-protocol":       "http",
 						"subscription-mode":           "cluster",
+						"subscription-path":           "",
 						"subscriptions":               nil,
 						"subscriptions-sync-interval": "1m0s",
 						"timeout":                     "0s",
@@ -6378,6 +6382,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 					"startup-timeout":             "1h0m0s",
 					"subscription-protocol":       "http",
 					"subscription-mode":           "cluster",
+					"subscription-path":           "",
 					"subscriptions":               nil,
 					"subscriptions-sync-interval": "1m0s",
 					"timeout":                     "0s",
@@ -6420,6 +6425,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 								"startup-timeout":             "1h0m0s",
 								"subscription-protocol":       "http",
 								"subscription-mode":           "cluster",
+								"subscription-path":           "",
 								"subscriptions":               nil,
 								"subscriptions-sync-interval": "1m0s",
 								"timeout":                     "0s",
@@ -6452,6 +6458,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 							"startup-timeout":             "1h0m0s",
 							"subscription-protocol":       "http",
 							"subscription-mode":           "cluster",
+							"subscription-path":           "",
 							"subscriptions":               nil,
 							"subscriptions-sync-interval": "1m0s",
 							"timeout":                     "0s",
@@ -6495,6 +6502,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 								"startup-timeout":             "1h0m0s",
 								"subscription-protocol":       "https",
 								"subscription-mode":           "cluster",
+								"subscription-path":           "",
 								"subscriptions":               map[string]interface{}{"_internal": []interface{}{"monitor"}},
 								"subscriptions-sync-interval": "1m0s",
 								"timeout":                     "0s",
@@ -6527,6 +6535,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 							"startup-timeout":             "1h0m0s",
 							"subscription-protocol":       "https",
 							"subscription-mode":           "cluster",
+							"subscription-path":           "",
 							"subscriptions":               map[string]interface{}{"_internal": []interface{}{"monitor"}},
 							"subscriptions-sync-interval": "1m0s",
 							"timeout":                     "0s",
@@ -6566,6 +6575,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 								"startup-timeout":             "1h0m0s",
 								"subscription-protocol":       "https",
 								"subscription-mode":           "cluster",
+								"subscription-path":           "",
 								"subscriptions":               map[string]interface{}{"_internal": []interface{}{"monitor"}},
 								"subscriptions-sync-interval": "1m0s",
 								"timeout":                     "0s",
@@ -6598,6 +6608,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 							"startup-timeout":             "1h0m0s",
 							"subscription-protocol":       "https",
 							"subscription-mode":           "cluster",
+							"subscription-path":           "",
 							"subscriptions":               map[string]interface{}{"_internal": []interface{}{"monitor"}},
 							"subscriptions-sync-interval": "1m0s",
 							"timeout":                     "0s",
@@ -6641,6 +6652,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 									"startup-timeout":             "1h0m0s",
 									"subscription-protocol":       "https",
 									"subscription-mode":           "cluster",
+									"subscription-path":           "",
 									"subscriptions":               map[string]interface{}{"_internal": []interface{}{"monitor"}},
 									"subscriptions-sync-interval": "1m0s",
 									"timeout":                     "0s",
@@ -6672,6 +6684,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 									"startup-timeout":             "5m0s",
 									"subscription-protocol":       "http",
 									"subscription-mode":           "cluster",
+									"subscription-path":           "",
 									"subscriptions":               nil,
 									"subscriptions-sync-interval": "1m0s",
 									"timeout":                     "0s",
@@ -6706,6 +6719,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 							"subscription-protocol":       "http",
 							"subscriptions":               nil,
 							"subscription-mode":           "cluster",
+							"subscription-path":           "",
 							"subscriptions-sync-interval": "1m0s",
 							"timeout":                     "0s",
 							"udp-bind":                    "",
@@ -6813,8 +6827,8 @@ func TestServer_UpdateConfig(t *testing.T) {
 			element: "test",
 			setDefaults: func(c *server.Config) {
 				apc := httppost.Config{
-					Endpoint: "test",
-					URL:      "http://httppost.example.com",
+					Endpoint:    "test",
+					URLTemplate: "http://httppost.example.com",
 					Headers: map[string]string{
 						"testing": "works",
 					},
@@ -7359,6 +7373,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 						"api-key":         false,
 						"enabled":         false,
 						"global":          false,
+						"details":         false,
 						"recipients":      nil,
 						"teams":           nil,
 						"url":             "http://opsgenie2.example.com",
@@ -7375,6 +7390,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 					"api-key":         false,
 					"enabled":         false,
 					"global":          false,
+					"details":         false,
 					"recipients":      nil,
 					"teams":           nil,
 					"url":             "http://opsgenie2.example.com",
@@ -7401,6 +7417,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 								"api-key":         true,
 								"enabled":         false,
 								"global":          true,
+								"details":         false,
 								"recipients":      nil,
 								"teams":           []interface{}{"teamA", "teamB"},
 								"url":             "http://opsgenie2.example.com",
@@ -7417,6 +7434,7 @@ func TestServer_UpdateConfig(t *testing.T) {
 							"api-key":         true,
 							"enabled":         false,
 							"global":          true,
+							"details":         false,
 							"recipients":      nil,
 							"teams":           []interface{}{"teamA", "teamB"},
 							"url":             "http://opsgenie2.example.com",
@@ -7727,6 +7745,93 @@ func TestServer_UpdateConfig(t *testing.T) {
 							"handlers": nil,
 						},
 						Redacted: nil,
+					},
+				},
+			},
+		},
+		{
+			section: "servicenow",
+			setDefaults: func(c *server.Config) {
+				c.ServiceNow.URL = "https://instance.service-now.com/api/global/em/jsonv2"
+				c.ServiceNow.Source = "Kapacitor"
+				c.ServiceNow.Username = ""
+				c.ServiceNow.Password = ""
+			},
+			expDefaultSection: client.ConfigSection{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow"},
+				Elements: []client.ConfigElement{{
+					Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+					Options: map[string]interface{}{
+						"enabled":            false,
+						"global":             false,
+						"state-changes-only": false,
+						"url":                "https://instance.service-now.com/api/global/em/jsonv2",
+						"source":             "Kapacitor",
+						"username":           "",
+						"password":           false,
+					},
+					Redacted: []string{
+						"password",
+					},
+				}},
+			},
+			expDefaultElement: client.ConfigElement{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+				Options: map[string]interface{}{
+					"enabled":            false,
+					"global":             false,
+					"state-changes-only": false,
+					"url":                "https://instance.service-now.com/api/global/em/jsonv2",
+					"source":             "Kapacitor",
+					"username":           "",
+					"password":           false,
+				},
+				Redacted: []string{
+					"password",
+				},
+			},
+			updates: []updateAction{
+				{
+					updateAction: client.ConfigUpdateAction{
+						Set: map[string]interface{}{
+							"enabled":  true,
+							"url":      "https://dev12345.service-now.com/api/global/em/jsonv2",
+							"username": "dev",
+							"password": "12345",
+						},
+					},
+					expSection: client.ConfigSection{
+						Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow"},
+						Elements: []client.ConfigElement{{
+							Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+							Options: map[string]interface{}{
+								"enabled":            true,
+								"global":             false,
+								"state-changes-only": false,
+								"url":                "https://dev12345.service-now.com/api/global/em/jsonv2",
+								"source":             "Kapacitor",
+								"username":           "dev",
+								"password":           true,
+							},
+							Redacted: []string{
+								"password",
+							},
+						}},
+					},
+					expElement: client.ConfigElement{
+						Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/config/servicenow/"},
+						Options: map[string]interface{}{
+							"enabled":            true,
+							"global":             false,
+							"state-changes-only": false,
+							"url":                "https://dev12345.service-now.com/api/global/em/jsonv2",
+							"source":             "Kapacitor",
+							"username":           "dev",
+							"password":           true,
+						},
+						Redacted: []string{
+							"password",
+						},
 					},
 				},
 			},
@@ -8750,6 +8855,10 @@ func TestServer_ListServiceTests(t *testing.T) {
 						"testServiceA",
 						"testServiceB",
 					},
+					"correlate": []interface{}{
+						"testServiceX",
+						"testServiceY",
+					},
 					"timeout": "24h0m0s",
 				},
 			},
@@ -8758,6 +8867,28 @@ func TestServer_ListServiceTests(t *testing.T) {
 				Name: "azure",
 				Options: client.ServiceTestOptions{
 					"id": "",
+				},
+			},
+			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/bigpanda"},
+				Name: "bigpanda",
+				Options: client.ServiceTestOptions{
+					"app_key":   "my-app-key-123456",
+					"level":     "CRITICAL",
+					"message":   "test bigpanda message",
+					"timestamp": "1970-01-01T00:00:01Z",
+					"event_data": map[string]interface{}{
+						"Fields": map[string]interface{}{},
+						"Result": map[string]interface{}{
+							"series": interface{}(nil),
+						},
+						"Name":        "testBigPanda",
+						"TaskName":    "",
+						"Group":       "",
+						"Tags":        map[string]interface{}{},
+						"Recoverable": false,
+						"Category":    "",
+					},
 				},
 			},
 			{
@@ -8890,11 +9021,12 @@ func TestServer_ListServiceTests(t *testing.T) {
 				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/opsgenie2"},
 				Name: "opsgenie2",
 				Options: client.ServiceTestOptions{
-					"teams":        nil,
-					"recipients":   nil,
-					"message-type": "CRITICAL",
-					"message":      "test opsgenie message",
-					"entity-id":    "testEntityID",
+					"teams":           nil,
+					"recipients":      nil,
+					"message-type":    "CRITICAL",
+					"message":         "test opsgenie message",
+					"entity-id":       "testEntityID",
+					"recovery_action": "notes",
 				},
 			},
 			{
@@ -8977,6 +9109,16 @@ func TestServer_ListServiceTests(t *testing.T) {
 				Name: "serverset",
 				Options: client.ServiceTestOptions{
 					"id": "",
+				},
+			},
+			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/servicenow"},
+				Name: "servicenow",
+				Options: client.ServiceTestOptions{
+					"alert_id": "id",
+					"source":   "Kapacitor",
+					"level":    "CRITICAL",
+					"message":  "test servicenow alert",
 				},
 			},
 			{
@@ -9128,6 +9270,16 @@ func TestServer_ListServiceTests_WithPattern(t *testing.T) {
 				Name: "serverset",
 				Options: client.ServiceTestOptions{
 					"id": "",
+				},
+			},
+			{
+				Link: client.Link{Relation: client.Self, Href: "/kapacitor/v1/service-tests/servicenow"},
+				Name: "servicenow",
+				Options: client.ServiceTestOptions{
+					"alert_id": "id",
+					"source":   "Kapacitor",
+					"level":    "CRITICAL",
+					"message":  "test servicenow alert",
 				},
 			},
 			{
@@ -9311,6 +9463,14 @@ func TestServer_DoServiceTest(t *testing.T) {
 		},
 		{
 			service: "sensu",
+			options: client.ServiceTestOptions{},
+			exp: client.ServiceTestResult{
+				Success: false,
+				Message: "service is not enabled",
+			},
+		},
+		{
+			service: "servicenow",
 			options: client.ServiceTestOptions{},
 			exp: client.ServiceTestResult{
 				Success: false,
@@ -9646,7 +9806,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := alertatest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Alerta.Enabled = true
 				c.Alerta.URL = ts.URL
@@ -9667,11 +9827,51 @@ func TestServer_AlertHandlers(t *testing.T) {
 						Text:        "message",
 						Origin:      "kapacitor",
 						Service:     []string{"alert"},
+						Correlate:   []string{"alert"},
 						Timeout:     86400,
 					},
 				}}
 				if !reflect.DeepEqual(exp, got) {
 					return fmt.Errorf("unexpected alerta request:\nexp\n%+v\ngot\n%+v\n", exp, got)
+				}
+				return nil
+			},
+		},
+		{
+			handler: client.TopicHandler{
+				Kind: "bigpanda",
+				Options: map[string]interface{}{
+					"app-key": "my-app-key-123456",
+				},
+			},
+			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
+				ts := bigpandatest.NewServer()
+				ctxt := context.WithValue(nil, "server", ts)
+
+				c.BigPanda.Enabled = true
+				c.BigPanda.Token = "my-token-123"
+				c.BigPanda.AppKey = "my-app-key"
+				c.BigPanda.URL = ts.URL + "/test/bigpanda/alert"
+				return ctxt, nil
+			},
+			result: func(ctxt context.Context) error {
+				ts := ctxt.Value("server").(*bigpandatest.Server)
+				ts.Close()
+				got := ts.Requests()
+				exp := []bigpandatest.Request{{
+					URL: "/test/bigpanda/alert",
+					PostData: bigpandatest.PostData{
+						AppKey:      "my-app-key-123456",
+						Check:       "id",
+						Status:      "critical",
+						Timestamp:   0,
+						Task:        "testAlertHandlers:alert",
+						Description: "message",
+						Details:     "details",
+					},
+				}}
+				if !reflect.DeepEqual(exp, got) {
+					return fmt.Errorf("unexpected bigpanda request:\nexp\n%+v\ngot\n%+v\n", exp, got)
 				}
 				return nil
 			},
@@ -9687,7 +9887,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := discordtest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Discord[0].Enabled = true
 				c.Discord[0].URL = ts.URL + "/test/discord/url"
@@ -9728,7 +9928,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				te := alerttest.NewExec()
-				ctxt := context.WithValue(nil, "exec", te)
+				ctxt := context.WithValue(context.Background(), "exec", te)
 				c.Commander = te.Commander
 				return ctxt, nil
 			},
@@ -9766,7 +9966,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := hipchattest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.HipChat.Enabled = true
 				c.HipChat.URL = ts.URL
@@ -9804,7 +10004,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Kafka = kafka.Configs{{
 					Enabled: true,
@@ -9863,7 +10063,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 
 				l := alerttest.NewLog(p)
 
-				ctxt := context.WithValue(nil, "tdir", tdir)
+				ctxt := context.WithValue(context.Background(), "tdir", tdir)
 				ctxt = context.WithValue(ctxt, "log", l)
 				return ctxt, nil
 			},
@@ -9902,7 +10102,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				cc := new(mqtttest.ClientCreator)
-				ctxt := context.WithValue(nil, "clientCreator", cc)
+				ctxt := context.WithValue(context.Background(), "clientCreator", cc)
 				cfg := &mqtt.Config{
 					Enabled: true,
 					Name:    "test",
@@ -9949,7 +10149,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				cc := new(mqtttest.ClientCreator)
-				ctxt := context.WithValue(nil, "clientCreator", cc)
+				ctxt := context.WithValue(context.Background(), "clientCreator", cc)
 				cfg := &mqtt.Config{
 					Enabled: true,
 					Name:    "test",
@@ -9995,7 +10195,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := opsgenietest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.OpsGenie.Enabled = true
 				c.OpsGenie.URL = ts.URL
@@ -10039,9 +10239,10 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := opsgenie2test.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.OpsGenie2.Enabled = true
+				c.OpsGenie2.Details = false
 				c.OpsGenie2.URL = ts.URL
 				c.OpsGenie2.RecoveryAction = "notes"
 				c.OpsGenie2.APIKey = "api_key"
@@ -10089,7 +10290,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := pagerdutytest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.PagerDuty.Enabled = true
 				c.PagerDuty.URL = ts.URL
@@ -10136,7 +10337,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := pagerduty2test.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.PagerDuty2.Enabled = true
 				c.PagerDuty2.URL = ts.URL
@@ -10198,7 +10399,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 
 				ha.Options = map[string]interface{}{"url": ts.URL}
 
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 				return ctxt, nil
 			},
 			result: func(ctxt context.Context) error {
@@ -10221,10 +10422,10 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := httpposttest.NewAlertServer(nil, true)
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 				c.HTTPPost = httppost.Configs{{
 					Endpoint:      "test",
-					URL:           ts.URL,
+					URLTemplate:   ts.URL,
 					AlertTemplate: `{{.Message}}`,
 				}}
 				return ctxt, nil
@@ -10249,7 +10450,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := pushovertest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Pushover.Enabled = true
 				c.Pushover.URL = ts.URL
@@ -10291,7 +10492,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Sensu.Enabled = true
 				c.Sensu.Addr = ts.Addr
@@ -10320,6 +10521,45 @@ func TestServer_AlertHandlers(t *testing.T) {
 		},
 		{
 			handler: client.TopicHandler{
+				Kind: "servicenow",
+				Options: map[string]interface{}{
+					"source": "Kapacitor",
+				},
+			},
+			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
+				ts := servicenowtest.NewServer()
+				ctxt := context.WithValue(context.Background(), "server", ts)
+
+				c.ServiceNow.Enabled = true
+				c.ServiceNow.URL = ts.URL + "/api/global/em/jsonv2"
+				c.ServiceNow.Source = "Kapacitor"
+				return ctxt, nil
+			},
+			result: func(ctxt context.Context) error {
+				ts := ctxt.Value("server").(*servicenowtest.Server)
+				ts.Close()
+				exp := []servicenowtest.Request{{
+					URL: "/api/global/em/jsonv2",
+					Alerts: servicenow.Events{
+						Records: []servicenow.Event{
+							{
+								Source:      "Kapacitor",
+								Severity:    "1",
+								Description: "message",
+								MessageKey:  "id",
+							},
+						},
+					},
+				}}
+				got := ts.Requests()
+				if !reflect.DeepEqual(exp, got) {
+					return fmt.Errorf("unexpected servicenow request:\nexp\n%+v\ngot\n%+v\n", exp, got)
+				}
+				return nil
+			},
+		},
+		{
+			handler: client.TopicHandler{
 				Kind: "slack",
 				Options: map[string]interface{}{
 					"channel": "#test",
@@ -10327,7 +10567,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := slacktest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Slack[0].Enabled = true
 				c.Slack[0].URL = ts.URL + "/test/slack/url"
@@ -10371,7 +10611,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.SMTP.Enabled = true
 				c.SMTP.Host = ts.Host
@@ -10436,7 +10676,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.SNMPTrap.Enabled = true
 				c.SNMPTrap.Addr = ts.Addr
@@ -10488,7 +10728,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := talktest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Talk.Enabled = true
 				c.Talk.URL = ts.URL
@@ -10525,7 +10765,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 
 				ha.Options = map[string]interface{}{"address": ts.Addr}
 
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 				return ctxt, nil
 			},
 			result: func(ctxt context.Context) error {
@@ -10545,7 +10785,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := teamstest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Teams.Enabled = true
 				c.Teams.ChannelURL = ts.URL
@@ -10581,7 +10821,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := telegramtest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.Telegram.Enabled = true
 				c.Telegram.URL = ts.URL + "/bot"
@@ -10617,7 +10857,7 @@ func TestServer_AlertHandlers(t *testing.T) {
 			},
 			setup: func(c *server.Config, ha *client.TopicHandler) (context.Context, error) {
 				ts := victoropstest.NewServer()
-				ctxt := context.WithValue(nil, "server", ts)
+				ctxt := context.WithValue(context.Background(), "server", ts)
 
 				c.VictorOps.Enabled = true
 				c.VictorOps.URL = ts.URL

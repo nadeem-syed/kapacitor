@@ -56,7 +56,8 @@ type AlertNode struct{ *AlertNodeData }
 //    * Telegram -- Post alert message to Telegram client.
 //    * MQTT -- Post alert message to MQTT.
 //    * Teams -- Post alert message to Microsoft Teams.
-//	  * Discord -- Post alert message to Discord webhook.
+//    * Discord -- Post alert message to Discord webhook.
+//    * ServiceNow -- Post alert message to ServiceNow.
 //
 // See below for more details on configuring each handler.
 //
@@ -356,6 +357,10 @@ type AlertNodeData struct {
 	// tick:ignore
 	DiscordHandlers []*DiscordHandler `tick:"Discord" json:"discord"`
 
+	// Send alert to BigPanda
+	// tick:ignore
+	BigPandaHandlers []*BigPandaHandler `tick:"BigPanda" json:"bigPanda"`
+
 	// Send alert to Telegram.
 	// tick:ignore
 	TelegramHandlers []*TelegramHandler `tick:"Telegram" json:"telegram"`
@@ -395,6 +400,10 @@ type AlertNodeData struct {
 	// Send alert to Microsoft Teams channel.
 	// tick:ignore
 	TeamsHandlers []*TeamsHandler `tick:"Teams" json:"teams"`
+
+	// Send alert to ServiceNow.
+	// tick:ignore
+	ServiceNowHandlers []*ServiceNowHandler `tick:"ServiceNow" json:"serviceNow"`
 }
 
 func newAlertNode(wants EdgeType) *AlertNode {
@@ -1247,6 +1256,9 @@ type AlertaHandler struct {
 	// tick:ignore
 	Service []string `tick:"Services" json:"service"`
 
+	// List of Correlated
+	Correlate []string `tick:"Correlated" json:"correlate"`
+
 	// Alerta timeout.
 	// Default: 24h
 	Timeout time.Duration `json:"timeout"`
@@ -1257,6 +1269,11 @@ type AlertaHandler struct {
 // tick:property
 func (a *AlertaHandler) Services(service ...string) *AlertaHandler {
 	a.Service = service
+	return a
+}
+
+func (a *AlertaHandler) Correlated(correlate ...string) *AlertaHandler {
+	a.Correlate = correlate
 	return a
 }
 
@@ -1383,18 +1400,20 @@ func (s *SensuHandler) Metadata(key string, value interface{}) *SensuHandler {
 //    [pushover]
 //      enabled = true
 //      token = "9hiWoDOZ9IbmHsOTeST123ABciWTIqXQVFDo63h9"
-//      user_key = "Pushover"
+//      user-key = "Pushover"
 //
 // Example:
 //    stream
 //         |alert()
 //             .pushover()
 //              .sound('siren')
-//              .user_key('other user')
+//              .userKey('other user key or delivery group key')
 //              .device('mydev')
 //              .title('mytitle')
 //              .URL('myurl')
 //              .URLTitle('mytitle')
+//
+// If the userKey() is omitted from above, the default userKey is used from the global pushover configuration
 //
 // Send alerts to Pushover.
 //
@@ -1608,6 +1627,71 @@ type DiscordHandler struct {
 	EmbedTitle string `json:"embedTitle"`
 }
 
+// To allow Kapacitor to post to BigPanda,
+// follow this guide https://docs.bigpanda.io/docs/api-key-management
+// and create a new api key
+// in the 'bigpanda' configuration section.
+//
+// Example:
+//    [bigpanda]
+//      enabled = true
+//      app-key = "my-app-key"
+//      token = "your-api-key"
+//
+// In order to not post a message every alert interval
+// use AlertNode.StateChangesOnly so that only events
+// where the alert changed state are posted to the channel.
+//
+// Example:
+//    stream
+//         |alert()
+//             .bigPanda()
+//
+// Send alerts with default app key
+//
+// Example:
+// stream
+//      |alert()
+//          .bigPanda()
+//          .appKey('my-application')
+//
+// send alerts with custom appKey
+//
+// If the 'bigpanda' section in the configuration has the option: global = true
+// then all alerts are sent to BigpPanda without the need to explicitly state it
+// in the TICKscript.
+//
+// Example:
+//    [bigpanda]
+//      enabled = true
+//      default = true
+//      app-key = examplecorp
+//      global = true
+//      state-changes-only = true
+//
+// Example:
+//    stream
+//         |alert()
+//
+// Send alert to BigPanda.
+// tick:property
+
+func (n *AlertNodeData) BigPanda() *BigPandaHandler {
+	bigPanda := &BigPandaHandler{
+		AlertNodeData: n,
+	}
+	n.BigPandaHandlers = append(n.BigPandaHandlers, bigPanda)
+	return bigPanda
+}
+
+// tick:embedded:AlertNode.BigPanda
+type BigPandaHandler struct {
+	*AlertNodeData `json:"-"`
+	// Application id
+	// If empty uses the default config
+	AppKey string `json:"app-key"`
+}
+
 // Send the alert to Telegram.
 // For step-by-step instructions on setting up Kapacitor with Telegram, see the [Event Handler Setup Guide](https://docs.influxdata.com//kapacitor/latest/guides/event-handler-setup/#telegram-setup).
 // To allow Kapacitor to post to Telegram,
@@ -1819,6 +1903,7 @@ func (og *OpsGenieHandler) Recipients(recipients ...string) *OpsGenieHandler {
 //      enabled = true
 //      api-key = "xxxxx"
 //      recipients = ["johndoe"]
+//      details = false
 //      global = true
 //
 // Example:
@@ -1846,6 +1931,14 @@ type OpsGenie2Handler struct {
 	// OpsGenie2 Recipients.
 	// tick:ignore
 	RecipientsList []string `tick:"Recipients" json:"recipients"`
+
+	// OpsGenie2 recovery_action
+	// tick:ignore
+	RecoveryActionString string `tick:"RecoveryAction" json:"recovery_action"`
+
+	// OpsGenie2 details
+	// tick:ignore
+	IsDetails bool `tick:"Details" json:"details"`
 }
 
 // The list of teams to be alerted. If empty defaults to the teams from the configuration.
@@ -1859,6 +1952,20 @@ func (og *OpsGenie2Handler) Teams(teams ...string) *OpsGenie2Handler {
 // tick:property
 func (og *OpsGenie2Handler) Recipients(recipients ...string) *OpsGenie2Handler {
 	og.RecipientsList = recipients
+	return og
+}
+
+// The action to perform when the alarm recovers. If empty defaults to the recovery_action from the configuration.
+// tick:property
+func (og *OpsGenie2Handler) RecoveryAction(recoveryAction string) *OpsGenie2Handler {
+	og.RecoveryActionString = recoveryAction
+	return og
+}
+
+// The action to perform when the alarm recovers. If empty defaults to the recovery_action from the configuration.
+// tick:property
+func (og *OpsGenie2Handler) Details() *OpsGenie2Handler {
+	og.IsDetails = true
 	return og
 }
 
@@ -2105,4 +2212,95 @@ type TeamsHandler struct {
 	// Teams channel webhook URL to post messages.
 	// If empty uses the URL from the configuration.
 	ChannelURL string `json:"channel_url"`
+}
+
+// Send the alert to ServiceNow.
+//
+// Example:
+//    [serviceNow]
+//      enabled = true
+//      url = "https://instance.service-now.com/api/global/em/jsonv2"
+//
+// In order to not post a message every alert interval
+// use AlertNode.StateChangesOnly so that only events
+// where the alert changed state are posted to the room.
+//
+// Example:
+//    stream
+//         |alert()
+//             .serviceNow()
+//
+// If the 'serviceNow' section in the configuration has the option: global = true
+// then all alerts are sent to ServiceNow without the need to explicitly state it
+// in the TICKscript.
+//
+// Example:
+//    [serviceNow]
+//      enabled = true
+//      url = "https://instance.service-now.com/api/global/em/jsonv2"
+//      global = true
+//      state-changes-only = true
+//
+// Example:
+//    stream
+//         |alert()
+//
+// Send alert to ServiceNow using default url.
+// tick:property
+func (n *AlertNodeData) ServiceNow() *ServiceNowHandler {
+	serviceNow := &ServiceNowHandler{
+		AlertNodeData: n,
+	}
+	n.ServiceNowHandlers = append(n.ServiceNowHandlers, serviceNow)
+	return serviceNow
+}
+
+// tick:embedded:AlertNode.ServiceNow
+type ServiceNowHandler struct {
+	*AlertNodeData `json:"-"`
+
+	// ServiceNow API URL to post alerts.
+	// If empty uses the URL from the configuration.
+	URL string `json:"url"`
+
+	// Username for BASIC authentication.
+	// If empty uses username from the configuration.
+	Username string `json:"username"`
+
+	// Password for BASIC authentication.
+	// If empty uses password from the configuration.
+	Password string `json:"password"`
+
+	// Event source identification (event monitoring software).
+	// If empty uses the URL from the configuration.
+	Source string `json:"source"`
+
+	// Node name.
+	Node string `json:"node"`
+
+	// Metric type.
+	Type string `json:"type"`
+
+	// Node resource relevant to the event.
+	Resource string `json:"resource"`
+
+	// Metric name for which event has been created..
+	MetricName string `json:"metric_name"`
+
+	// Message key.
+	MessageKey string `json:"message_key"`
+
+	// Addition info.
+	// tick:ignore
+	AdditionalInfoMap map[string]interface{} `tick:"AdditionalInfo" json:"additional_info"`
+}
+
+// AdditionalInfo adds key values pairs to the request.
+// tick:property
+func (s *ServiceNowHandler) AdditionalInfo(key string, value interface{}) *ServiceNowHandler {
+	if s.AdditionalInfoMap == nil {
+		s.AdditionalInfoMap = make(map[string]interface{})
+	}
+	s.AdditionalInfoMap[key] = value
+	return s
 }

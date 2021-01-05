@@ -252,6 +252,7 @@ func TestPipeline_MarshalJSON(t *testing.T) {
             "sensu": null,
             "slack": null,
             "discord": null,
+            "bigPanda": null,
             "telegram": null,
             "hipChat": null,
             "alerta": null,
@@ -261,7 +262,8 @@ func TestPipeline_MarshalJSON(t *testing.T) {
             "mqtt": null,
             "snmpTrap": null,
             "kafka": null,
-            "teams": null
+            "teams": null,
+            "serviceNow": null
         },
         {
             "typeOf": "httpOut",

@@ -1,18 +1,47 @@
 # Changelog
 
-## unreleased
-
-### Features
-- [#2287](https://github.com/influxdata/kapacitor/pull/2287): Added Discord Webhook Alert Handler, thanks @mattnotmitt!
-- [#2311](https://github.com/influxdata/kapacitor/pull/2311): UDF Agent Python3 fixes, thanks @elohmeier!
-- [#2318](https://github.com/influxdata/kapacitor/pull/2322): Add support for TLS 1.3.
-- [#1965](https://github.com/influxdata/kapacitor/pull/1965): Alert handler for Microsoft Teams, thanks @mmindenhall!
+## Unreleased
 
 ### Bugfixes
-- [#2286](https://github.com/influxdata/kapacitor/pull/2286): Corrected issue with `go vet` invocation in .hooks/pre-commit which would cause the hook to fail, thanks @mattnotmitt!
+- [#2448](https://github.com/influxdata/kapacitor/pull/2448): Changes the alert-handler match function duration() to be alertDuration() to avoid name collision with the type conversion function of the same name.
+
+
+### Features
+- [#1839](https://github.com/influxdata/kapacitor/pull/1839): Add Subscription path configuration option to allow Kapacitor to run behind a reverse proxy, thanks @aspring
+- [#1894](https://github.com/influxdata/kapacitor/pull/1894): Add HTTP sources for sideload configuration, thanks @jregovic!
+- [#2055](https://github.com/influxdata/kapacitor/pull/2055): Add support for correlate in the Alerta AlertNode, thanks @nermolaev!
+- [#2409](https://github.com/influxdata/kapacitor/pull/2409): Optionally use kapacitor alert details as opsgenie description text,  thanks @JamesClonk!
+- [#2441](https://github.com/influxdata/kapacitor/pull/2441): Preallocate GroupIDs for increased performance by reducing allocations.
+
+## v1.5.7 [2020-10-27]
+
+### Features
+- [#2301](https://github.com/influxdata/kapacitor/pull/2301): Allow for overriding OpsGenieV2's alert recovery action in tickSCRIPT, thanks @zabullet!
+- [#2388](https://github.com/influxdata/kapacitor/pull/2388): Added templating for the url in the `httpPost` node and the `alert().post()` node.
+- [#2351](https://github.com/influxdata/kapacitor/pull/2351): Upgraded github.com/gorhill/cronexpr, thanks @wuguanyu!
+- [#2416](https://github.com/influxdata/kapacitor/pull/2416): Added a ServiceNow event handler.
+### Bugfixes
+- [#2201](https://github.com/influxdata/kapacitor/pull/2201): Added missing err check of a buf scanner, thanks @johncming!
+- [#2395](http://github.com/influxdata/kapacitor/pull/2395): Added missing .Details to AlertTemplate.
+
+## v1.5.6 [2020-07-17]
+
+### Features
+- [#1965](https://github.com/influxdata/kapacitor/pull/1965): Alert handler for Microsoft Teams, thanks @mmindenhall!
+- [#2287](https://github.com/influxdata/kapacitor/pull/2287): Added Discord Webhook Alert Handler, thanks @mattnotmitt!
+- [#2311](https://github.com/influxdata/kapacitor/pull/2311): UDF Agent Python3 fixes, thanks @elohmeier!
+- [#2312](https://github.com/influxdata/kapacitor/pull/2312): feat(build): switch from md5 to sha256
+- [#2322](https://github.com/influxdata/kapacitor/pull/2322): Add support for TLS 1.3.
+
+### Bugfixes
 - [#1980](https://github.com/influxdata/kapacitor/pull/1980): Fix discovery service lost config, thanks @flisky!
+- [#2156](https://github.com/influxdata/kapacitor/pull/2156): Use Systemd for Amazon Linux 2
+- [#2282](https://github.com/influxdata/kapacitor/pull/2282): fix small typo.
+- [#2286](https://github.com/influxdata/kapacitor/pull/2286): Corrected issue with `go vet` invocation in .hooks/pre-commit which would cause the hook to fail, thanks @mattnotmitt!
+- [#2289](https://github.com/influxdata/kapacitor/pull/2289): Update build.py to support arm64, thanks @povlhp
 - [#2335](https://github.com/influxdata/kapacitor/pull/2335): Fix panic when setting a zero interval for ticker, this affected deadman and stats nodes.
 - [#2340](https://github.com/influxdata/kapacitor/pull/2340): Fix a panic on int div-by-zero, instead return an error.
+- [#2358](https://github.com/influxdata/kapacitor/pull/2360): Fix Kapacitor ignoring the pushover().userKey('') TICKScript operation.
 
 ## v1.5.5 [2020-04-20]
 
@@ -75,7 +104,6 @@
 ## v1.5.0 [2018-05-17]
 
 ### Features
-
 - [#1842](https://github.com/influxdata/kapacitor/pull/1842): Add alert inhibitors that allow an alert to suppress events from other matching alerts.
 - [#1833](https://github.com/influxdata/kapacitor/pull/1833): Config format updated to allow for more than one slack configuration.  
 - [#1844](https://github.com/influxdata/kapacitor/pull/1844): Added a new kapacitor node changeDetect that emits a value

@@ -154,6 +154,12 @@ func (s *Service) NewDiscordHandler() *DiscordHandler {
 	}
 }
 
+func (s *Service) NewBigPandaHandler() *BigPandaHandler {
+	return &BigPandaHandler{
+		l: s.Logger.With(String("service", "bigpanda")),
+	}
+}
+
 func (s *Service) NewTaskStoreHandler() *TaskStoreHandler {
 	return &TaskStoreHandler{
 		l: s.Logger.With(String("service", "task_store")),
@@ -476,5 +482,11 @@ func (s *Service) NewLoadHandler() *LoadHandler {
 func (s *Service) NewTeamsHandler() *TeamsHandler {
 	return &TeamsHandler{
 		l: s.Logger.With(String("service", "teams")),
+	}
+}
+
+func (s *Service) NewServiceNowHandler() *ServiceNowHandler {
+	return &ServiceNowHandler{
+		l: s.Logger.With(String("service", "serviceNow")),
 	}
 }

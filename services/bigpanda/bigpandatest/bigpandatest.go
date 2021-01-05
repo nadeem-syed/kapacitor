@@ -1,4 +1,4 @@
-package alertatest
+package bigpandatest
 
 import (
 	"encoding/json"
@@ -18,26 +18,28 @@ type Server struct {
 func NewServer() *Server {
 	s := new(Server)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ar := Request{
-			URL:           r.URL.String(),
-			Authorization: r.Header.Get("Authorization"),
+		pr := Request{
+			URL: r.URL.String(),
 		}
 		dec := json.NewDecoder(r.Body)
-		dec.Decode(&ar.PostData)
+		dec.Decode(&pr.PostData)
 		s.mu.Lock()
-		s.requests = append(s.requests, ar)
+		s.requests = append(s.requests, pr)
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
+
 	}))
 	s.ts = ts
 	s.URL = ts.URL
 	return s
 }
+
 func (s *Server) Requests() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.requests
 }
+
 func (s *Server) Close() {
 	if s.closed {
 		return
@@ -47,20 +49,19 @@ func (s *Server) Close() {
 }
 
 type Request struct {
-	URL           string
-	Authorization string
-	PostData      PostData
+	URL      string
+	PostData PostData
 }
 
+// PostData is the default struct to send an element through to BigPanda
 type PostData struct {
-	Resource    string   `json:"resource"`
-	Event       string   `json:"event"`
-	Group       string   `json:"group"`
-	Environment string   `json:"environment"`
-	Text        string   `json:"text"`
-	Origin      string   `json:"origin"`
-	Service     []string `json:"service"`
-	Correlate   []string `json:"correlate"`
-	Value       string   `json:"value"`
-	Timeout     int64    `json:"timeout"`
+	AppKey      string `json:"app_key"`
+	Status      string `json:"status"`
+	Host        string `json:"host"`
+	Timestamp   int64  `json:"timestamp"`
+	Check       string `json:"check"`
+	Description string `json:"description"`
+	Cluster     string `json:"cluster"`
+	Task        string `json:"task"`
+	Details     string `json:"details"`
 }
