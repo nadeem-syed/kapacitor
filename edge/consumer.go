@@ -54,8 +54,7 @@ func (ec *consumer) Consume() error {
 				return err
 			}
 		case BufferedBatchMessage:
-			err := receiveBufferedBatch(ec.r, m)
-			if err != nil {
+			if err := receiveBufferedBatch(ec.r, m); err != nil {
 				return err
 			}
 		case PointMessage:
@@ -100,6 +99,7 @@ type MultiReceiver interface {
 	BufferedBatch(src int, batch BufferedBatchMessage) error
 	Point(src int, p PointMessage) error
 	Barrier(src int, b BarrierMessage) error
+	Delete(src int, d DeleteGroupMessage) error
 	Finish() error
 }
 
@@ -173,6 +173,10 @@ LOOP:
 				}
 			case BarrierMessage:
 				if err := c.r.Barrier(m.Src, msg); err != nil {
+					return err
+				}
+			case DeleteGroupMessage:
+				if err := c.r.Delete(m.Src, msg); err != nil {
 					return err
 				}
 			}

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/boltdb/bolt"
 	"github.com/influxdata/kapacitor"
 	"github.com/influxdata/kapacitor/client/v1"
 	"github.com/influxdata/kapacitor/keyvalue"
@@ -23,6 +22,7 @@ import (
 	"github.com/influxdata/kapacitor/tick/ast"
 	"github.com/influxdata/kapacitor/uuid"
 	"github.com/pkg/errors"
+	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -2001,7 +2001,6 @@ func (ts *Service) startTask(task Task) error {
 		ts.saveLastError(t.ID, err.Error())
 		return err
 	}
-
 	// Start batching
 	if t.Type == kapacitor.BatchTask {
 		err := et.StartBatching()

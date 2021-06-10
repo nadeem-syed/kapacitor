@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Features
+- [#2484](https://github.com/influxdata/kapacitor/pull/2484): Add Zenoss alert event handler.
+- [#2493](https://github.com/influxdata/kapacitor/pull/2493): Route kafka alerts to partitions by ID, and allow for configuring the hashing strategy.
+- [#2512](https://github.com/influxdata/kapacitor/pull/2512): Pull in auth code from Kapacitor Enterprise.
+- [#2530](https://github.com/influxdata/kapacitor/pull/2530): Add a node tricklenode that converts batches to streams, the inverse of windownode.
+- [#2544](https://github.com/influxdata/kapacitor/pull/2544): flux tasks skeleton in Kapacitor
+- [#2555](https://github.com/influxdata/kapacitor/pull/2555): run flux tasks with built-in flux engine
+- [#2559](https://github.com/influxdata/kapacitor/pull/2559): kapacitor cli supports flux tasks
+- [#2560](https://github.com/influxdata/kapacitor/pull/2560): enable new-style slack apps
+
+### Bugfixes
+- [#2564](https://github.com/influxdata/kapacitor/pull/2564): Fix a panic in the scraper handler when debug mode is enabled
+
+## v1.5.9 [2021-04-01]
+
+### Bugfixes
+- [#2479](https://github.com/influxdata/kapacitor/pull/2479): Fix influx gzip writes for large writes.
+- [#2488](https://github.com/influxdata/kapacitor/pull/2488): Fix function node name for ServiceNow handler so it is properly camelcased. 
+- [#2489](https://github.com/influxdata/kapacitor/pull/2489): Fix memory leaks in JoinNode and UnionNode.
+- [#2498](https://github.com/influxdata/kapacitor/pull/2498): Avoid infinite hang when closing Kakfa writer, this also prevents the timeout error on an http update to Kafka config.
+- [#2536](https://github.com/influxdata/kapacitor/pull/2536): Update prometheus dependency for service discovery
+
+### Features
+- [#2472](https://github.com/influxdata/kapacitor/pull/2472): Send full event payload on pagerduty resolve, thanks @asvinours!
+- [#2474](https://github.com/influxdata/kapacitor/pull/2474): Add barrier handling to FlattenNode.
+- [#2475](https://github.com/influxdata/kapacitor/pull/2475): Added default color theme to teams alerts, thanks @NoamShaish!
+- [#2491](https://github.com/influxdata/kapacitor/pull/2491): Fix TICKScript AST for bigpanda. 
+
+## v1.5.8 [2021-01-11]
+
 ### Bugfixes
 - [#2448](https://github.com/influxdata/kapacitor/pull/2448): Changes the alert-handler match function duration() to be alertDuration() to avoid name collision with the type conversion function of the same name.
 
@@ -12,6 +42,10 @@
 - [#2055](https://github.com/influxdata/kapacitor/pull/2055): Add support for correlate in the Alerta AlertNode, thanks @nermolaev!
 - [#2409](https://github.com/influxdata/kapacitor/pull/2409): Optionally use kapacitor alert details as opsgenie description text,  thanks @JamesClonk!
 - [#2441](https://github.com/influxdata/kapacitor/pull/2441): Preallocate GroupIDs for increased performance by reducing allocations.
+- [#2456](https://github.com/influxdata/kapacitor/pull/2456): Gzip data by default that is sent to influxdb.
+- [#2454](https://github.com/influxdata/kapacitor/pull/2454): Add PrimaryProperty and SecondaryProperty methods to BigPanda AlertNode.
+- [#2462](https://github.com/influxdata/kapacitor/pull/2462): BREAKING: we are forced to remove support for 386/darwin builds as go doesn't support them anymore.
+- [#2475](https://github.com/influxdata/kapacitor/pull/2475): Add default color theme to teams alerts
 
 ## v1.5.7 [2020-10-27]
 
@@ -1429,5 +1463,3 @@ Some bug fixes including one that cause Kapacitor to deadlock.
 ### Release Notes
 
 Major public release.
-
-

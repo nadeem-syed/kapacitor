@@ -187,7 +187,7 @@ func Bench(b *testing.B, tasksCount, pointCount, expectedProcessedCount int, tic
 	for i := 0; i < b.N; i++ {
 		// Do not time setup
 		b.StopTimer()
-		tm, err := createTaskMaster()
+		tm, err := createTaskMaster("testStreamer")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func Bench(b *testing.B, tasksCount, pointCount, expectedProcessedCount int, tic
 				responseRecorder := httptest.NewRecorder()
 				httpdService.Handler.ServeHTTP(responseRecorder, writeRequest)
 				if responseRecorder.Code != http.StatusNoContent {
-					b.Fatalf("failed to write test data %s", responseRecorder.Body.String())
+					b.Errorf("failed to write test data %s", responseRecorder.Body.String())
 				}
 			}(write.request, write.seeker)
 		}

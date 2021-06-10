@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"flag"
@@ -20,9 +21,6 @@ import (
 	"testing"
 	"text/template"
 	"time"
-
-	"github.com/influxdata/kapacitor/services/discord"
-	"github.com/influxdata/kapacitor/services/discord/discordtest"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/docker/docker/api/types/swarm"
@@ -44,6 +42,8 @@ import (
 	"github.com/influxdata/kapacitor/services/bigpanda"
 	"github.com/influxdata/kapacitor/services/bigpanda/bigpandatest"
 	"github.com/influxdata/kapacitor/services/diagnostic"
+	"github.com/influxdata/kapacitor/services/discord"
+	"github.com/influxdata/kapacitor/services/discord/discordtest"
 	"github.com/influxdata/kapacitor/services/hipchat"
 	"github.com/influxdata/kapacitor/services/hipchat/hipchattest"
 	"github.com/influxdata/kapacitor/services/httppost"
@@ -83,6 +83,8 @@ import (
 	"github.com/influxdata/kapacitor/services/telegram/telegramtest"
 	"github.com/influxdata/kapacitor/services/victorops"
 	"github.com/influxdata/kapacitor/services/victorops/victoropstest"
+	"github.com/influxdata/kapacitor/services/zenoss"
+	"github.com/influxdata/kapacitor/services/zenoss/zenosstest"
 	"github.com/influxdata/kapacitor/udf"
 	"github.com/influxdata/kapacitor/udf/agent"
 	udf_test "github.com/influxdata/kapacitor/udf/test"
@@ -4710,6 +4712,61 @@ errorCounts
 	testStreamerWithOutput(t, "TestStream_Join", script, 13*time.Second, er, true, nil)
 }
 
+func TestStream_Delete_Join(t *testing.T) {
+	var script = `
+var errorCounts = stream
+	|from()
+		.measurement('cpu')
+		.groupBy('host')
+	|window()
+		.period(10s)
+		.every(10s)
+		.align()
+
+	|sum('value')
+	|barrier()
+		.idle(1s)
+		.delete(TRUE)
+
+var viewCounts = stream
+	|from()
+		.measurement('views')
+		.groupBy('host')
+	|window()
+		.period(10s)
+		.every(10s)
+		.align()
+	|sum('value')
+	|barrier()
+		.idle(1s)
+		.delete(TRUE)
+
+errorCounts
+	|join(viewCounts)
+		.as('errors', 'views')
+		.streamName('error_view')
+		.tolerance(2s)
+		.deleteAll(TRUE)
+	|eval(lambda: "errors.sum" / "views.sum")
+		.as('error_percent')
+		.keep()
+	|httpOut('TestStream_Delete_Join')
+`
+	er := models.Result{
+		Series: models.Rows{
+			{
+				Name:    "error_view",
+				Tags:    map[string]string{"host": "serverA"},
+				Columns: []string{"time", "error_percent", "errors.sum", "views.sum"},
+				Values: [][]interface{}{
+					{time.Date(1971, 1, 1, 0, 0, 10, 0, time.UTC), 1.0, 18.0, 18.0},
+				},
+			},
+		},
+	}
+	testStreamerWithOutput(t, "TestStream_Delete_Join", script, 30*time.Second, er, true, nil)
+}
+
 func TestStream_Join_Delimiter(t *testing.T) {
 
 	var script = `
@@ -5770,7 +5827,6 @@ cpuT
 			},
 		},
 	}
-
 	testStreamerWithOutput(t, "TestStream_Union", script, 15*time.Second, er, false, nil)
 }
 
@@ -7253,7 +7309,7 @@ stream
 		}
 
 		if got, exp := len(init.Options), 2; got != exp {
-			t.Fatalf("unexpected number of options in init request, got %d exp %d", got, exp)
+			t.Errorf("unexpected number of options in init request, got %d exp %d", got, exp)
 		}
 		for i, opt := range init.Options {
 			exp := &agent.Option{}
@@ -8711,6 +8767,7 @@ stream
 		c2.Workspace = "company_private"
 		c2.Enabled = true
 		c2.URL = ts.URL + "/test/slack/url2"
+		c2.Token = "my_secret_token"
 		c2.Channel = "#channel"
 		d := diagService.NewSlackHandler().WithContext(keyvalue.KV("test", "slack"))
 		sl, err := slack.NewService([]slack.Config{c1, c2}, d)
@@ -8723,7 +8780,8 @@ stream
 
 	exp := []interface{}{
 		slacktest.Request{
-			URL: "/test/slack/url",
+			URL:        "/test/slack/url",
+			AuthHeader: "",
 			PostData: slacktest.PostData{
 				Channel:  "@jim",
 				Username: "kapacitor",
@@ -8739,7 +8797,8 @@ stream
 			},
 		},
 		slacktest.Request{
-			URL: "/test/slack/url2",
+			URL:        "/test/slack/url2",
+			AuthHeader: "Bearer my_secret_token",
 			PostData: slacktest.PostData{
 				Channel:  "#alerts",
 				Username: "kapacitor",
@@ -8810,7 +8869,7 @@ stream
 	exp := []interface{}{
 		kafkatest.Message{
 			Topic:     "testTopic",
-			Partition: 1,
+			Partition: 2,
 			Offset:    0,
 			Key:       "kapacitor/cpu/serverA",
 			Message:   "kapacitor/cpu/serverA is CRITICAL",
@@ -8849,6 +8908,64 @@ stream
 	}
 	if err := compareListIgnoreOrder(got, exp, cmpF); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestStream_AlertKafka_Partitioning(t *testing.T) {
+	ts, err := kafkatest.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ts.Close()
+
+	var script = `
+stream
+	|from()
+		.measurement('cpu')
+	|alert()
+		.id('{{ index .Tags "host" }}')
+		.crit(lambda: TRUE)
+		.kafka()
+		.cluster('default')
+		.kafkaTopic('testTopic')
+		.template('{{.Message}}')
+`
+
+	tmInit := func(tm *kapacitor.TaskMaster) {
+		configs := kafka.Configs{{
+			Enabled:   true,
+			ID:        "default",
+			Brokers:   []string{ts.Addr.String()},
+			BatchSize: 1,
+		}}
+		d := diagService.NewKafkaHandler().WithContext(keyvalue.KV("test", "kafka"))
+		tm.KafkaService = kafka.NewService(configs, d)
+	}
+	testStreamerNoOutput(t, "TestStream_Alert", script, 13*time.Second, tmInit)
+
+	// Wait for kakfa messages to be written
+	time.Sleep(time.Second)
+
+	ts.Close()
+	msgs, err := ts.Messages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]map[int32]struct{})
+	for _, m := range msgs {
+		// Record the partitions used per message key.
+		partitions, ok := got[m.Key]
+		if !ok {
+			got[m.Key] = make(map[int32]struct{})
+			partitions = got[m.Key]
+		}
+		partitions[m.Partition] = struct{}{}
+	}
+
+	for msg, partitions := range got {
+		if len(partitions) > 1 {
+			t.Fatalf("messages for %q were sent to %d partitions, expected only 1 partition", msg, len(partitions))
+		}
 	}
 }
 
@@ -10341,21 +10458,23 @@ stream
 		teamstest.Request{
 			URL: "/",
 			Card: teams.Card{
-				CardType: "MessageCard",
-				Context:  "http://schema.org/extensions",
-				Title:    "CRITICAL: [kapacitor/cpu/serverA]",
-				Text:     "kapacitor/cpu/serverA is CRITICAL",
-				Summary:  "CRITICAL: [kapacitor/cpu/serverA] - kapacitor/cpu/serverA is CRITICAL...",
+				CardType:   "MessageCard",
+				Context:    "http://schema.org/extensions",
+				Title:      "CRITICAL: [kapacitor/cpu/serverA]",
+				Text:       "kapacitor/cpu/serverA is CRITICAL",
+				Summary:    "CRITICAL: [kapacitor/cpu/serverA] - kapacitor/cpu/serverA is CRITICAL...",
+				ThemeColor: "CC4A31",
 			},
 		},
 		teamstest.Request{
 			URL: "/",
 			Card: teams.Card{
-				CardType: "MessageCard",
-				Context:  "http://schema.org/extensions",
-				Title:    "CRITICAL: [kapacitor/cpu/serverA]",
-				Text:     "kapacitor/cpu/serverA is CRITICAL",
-				Summary:  "CRITICAL: [kapacitor/cpu/serverA] - kapacitor/cpu/serverA is CRITICAL...",
+				CardType:   "MessageCard",
+				Context:    "http://schema.org/extensions",
+				Title:      "CRITICAL: [kapacitor/cpu/serverA]",
+				Text:       "kapacitor/cpu/serverA is CRITICAL",
+				Summary:    "CRITICAL: [kapacitor/cpu/serverA] - kapacitor/cpu/serverA is CRITICAL...",
+				ThemeColor: "CC4A31",
 			},
 		},
 	}
@@ -11147,6 +11266,161 @@ stream
 	}
 }
 
+func TestStream_AlertZenoss(t *testing.T) {
+	ts := zenosstest.NewServer()
+	defer ts.Close()
+
+	var script = `
+stream
+	|from()
+		.measurement('cpu')
+		.where(lambda: "host" == 'serverA')
+		.groupBy('host', 'type')
+	|window()
+		.period(10s)
+		.every(10s)
+	|mean('value')
+	|alert()
+		.id('kapacitor/{{ .Name }}/{{ index .Tags "host" }}')
+		.info(lambda: "mean" > 15.0)
+		.warn(lambda: "mean" > 50.0)
+		.crit(lambda: "mean" > 90.0)
+		.zenoss()
+			.device('#DEVICE001')
+			.component('CPU')
+			.eventClass('/App')
+`
+
+	tmInit := func(tm *kapacitor.TaskMaster) {
+
+		c := zenoss.NewConfig()
+		c.Enabled = true
+		c.URL = ts.URL + "/zport/dmd/evconsole_router"
+		c.Collector = ""
+		svc := zenoss.NewService(c, diagService.NewZenossHandler())
+		tm.ZenossService = svc
+	}
+
+	testStreamerNoOutput(t, "TestStream_Alert", script, 13*time.Second, tmInit)
+
+	exp := []interface{}{
+		zenosstest.Request{
+			URL: "/zport/dmd/evconsole_router",
+			Event: zenoss.Event{
+				Action: "EventsRouter",
+				Method: "add_event",
+				Data: []map[string]interface{}{
+					{
+						"summary":    "kapacitor/cpu/serverA is CRITICAL",
+						"device":     "#DEVICE001",
+						"component":  "CPU",
+						"severity":   "Critical",
+						"evclasskey": "",
+						"evclass":    "/App",
+					},
+				},
+				Type: "rpc",
+				TID:  1,
+			},
+		},
+	}
+
+	ts.Close()
+	var got []interface{}
+	for _, g := range ts.Requests() {
+		got = append(got, g)
+	}
+
+	if err := compareListIgnoreOrder(got, exp, nil); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestStream_AlertZenoss_Custom(t *testing.T) {
+	ts := zenosstest.NewServer()
+	defer ts.Close()
+
+	var script = `
+stream
+	|from()
+		.measurement('cpu')
+		.where(lambda: "host" == 'serverA')
+		.groupBy('host', 'type')
+	|window()
+		.period(10s)
+		.every(10s)
+	|mean('value')
+	|alert()
+		.id('kapacitor/{{ .Name }}/{{ index .Tags "host" }}')
+		.info(lambda: "mean" > 15.0)
+		.warn(lambda: "mean" > 50.0)
+		.crit(lambda: "mean" > 90.0)
+		.details('{{.}}')
+		.zenoss()
+			.action('ScriptsRouter')
+			.method('kapa_handler')
+			.eventClass('/App')
+			.message('This is message for alert {{ .ID }}')
+			.collector('{{ index .Tags "host" }}')
+			.customField('data', '{"id":"{{.ID}}","message":"{{.Message}}","time":"{{.Time}}","duration":"{{ .Duration}}","level":"{{.Level}}","recoverable":{{.Recoverable}}}')
+			.customField('ticks', 33)
+`
+	tmInit := func(tm *kapacitor.TaskMaster) {
+
+		c := zenoss.NewConfig()
+		c.Enabled = true
+		c.URL = ts.URL + "/zport/dmd/evconsole_router"
+		c.SeverityMap = zenoss.SeverityMap{OK: 0, Info: 2, Warning: 3, Critical: 5}
+		svc := zenoss.NewService(c, diagService.NewZenossHandler())
+		tm.ZenossService = svc
+	}
+
+	testStreamerNoOutput(t, "TestStream_Alert", script, 13*time.Second, tmInit)
+
+	exp := []interface{}{
+		zenosstest.Request{
+			URL: "/zport/dmd/evconsole_router",
+			Event: zenoss.Event{
+				Action: "ScriptsRouter",
+				Method: "kapa_handler",
+				Data: []map[string]interface{}{
+					{
+						"summary":    "kapacitor/cpu/serverA is CRITICAL",
+						"device":     "",
+						"component":  "",
+						"severity":   float64(5),
+						"evclasskey": "",
+						"evclass":    "/App",
+						"collector":  "serverA",
+						"message":    "This is message for alert kapacitor/cpu/serverA",
+						"data": map[string]interface{}{
+							"id":          "kapacitor/cpu/serverA",
+							"level":       "CRITICAL",
+							"message":     "kapacitor/cpu/serverA is CRITICAL",
+							"time":        "1971-01-01 00:00:10 +0000 UTC",
+							"duration":    "0s",
+							"recoverable": true,
+						},
+						"ticks": float64(33),
+					},
+				},
+				Type: "rpc",
+				TID:  1,
+			},
+		},
+	}
+
+	ts.Close()
+	var got []interface{}
+	for _, g := range ts.Requests() {
+		got = append(got, g)
+	}
+
+	if err := compareListIgnoreOrder(got, exp, nil); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestStream_LambdaNow(t *testing.T) {
 	var script = `
 stream
@@ -11516,7 +11790,7 @@ stream
 `
 
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -11572,7 +11846,7 @@ stream
 		},
 	}
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -11704,7 +11978,7 @@ stream
 		},
 	}
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -12129,7 +12403,7 @@ stream
 	name := "TestStream_InfluxDBOut"
 
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -12189,7 +12463,7 @@ stream
 	name := "TestStream_InfluxDBOut"
 
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -13240,7 +13514,7 @@ func testStreamer(
 	}
 
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -13321,7 +13595,7 @@ func testStreamerWithInputChannel(
 	}
 
 	// Create a new execution env
-	tm, err := createTaskMaster()
+	tm, err := createTaskMaster("testStreamer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -13400,7 +13674,6 @@ func testStreamerWithOutput(
 	if err != nil {
 		t.Error(err)
 	}
-
 	// Get the result
 	output, err := et.GetOutput(name)
 	if err != nil {
@@ -13411,9 +13684,15 @@ func testStreamerWithOutput(
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	// Assert we got the expected result
 	result := models.Result{}
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		resp.Body, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer resp.Body.Close()
 	err = json.NewDecoder(resp.Body).Decode(&result)
 	if err != nil {
 		t.Fatal(err)
@@ -13555,9 +13834,9 @@ func compareListIgnoreOrder(got, exp []interface{}, cmpF func(got, exp interface
 	return nil
 }
 
-func createTaskMaster() (*kapacitor.TaskMaster, error) {
+func createTaskMaster(name string) (*kapacitor.TaskMaster, error) {
 	d := diagService.NewKapacitorHandler()
-	tm := kapacitor.NewTaskMaster("testStreamer", newServerInfo(), d)
+	tm := kapacitor.NewTaskMaster(name, newServerInfo(), d)
 	httpdService := newHTTPDService()
 	tm.HTTPDService = httpdService
 	tm.TaskStore = taskStore{}

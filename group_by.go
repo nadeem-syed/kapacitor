@@ -77,7 +77,9 @@ func (n *GroupByNode) BeginBatch(begin edge.BeginBatchMessage) error {
 	n.timer.Start()
 	defer n.timer.Stop()
 
-	n.emit(begin.Time())
+	if err := n.emit(begin.Time()); err != nil {
+		return err
+	}
 
 	n.begin = begin
 	n.dimensions = begin.Dimensions()
@@ -126,9 +128,16 @@ func (n *GroupByNode) Barrier(b edge.BarrierMessage) error {
 	}
 	return edge.Forward(n.outs, b)
 }
+
 func (n *GroupByNode) DeleteGroup(d edge.DeleteGroupMessage) error {
+	n.timer.Start()
+	n.mu.Lock()
+	delete(n.groups, d.GroupID())
+	n.mu.Unlock()
+	n.timer.Stop()
 	return edge.Forward(n.outs, d)
 }
+
 func (n *GroupByNode) Done() {}
 
 // emit sends all groups before time t to children nodes.

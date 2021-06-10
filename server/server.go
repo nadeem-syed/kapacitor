@@ -24,6 +24,7 @@ import (
 	"github.com/influxdata/kapacitor/server/vars"
 	"github.com/influxdata/kapacitor/services/alert"
 	"github.com/influxdata/kapacitor/services/alerta"
+	authservice "github.com/influxdata/kapacitor/services/auth"
 	"github.com/influxdata/kapacitor/services/azure"
 	"github.com/influxdata/kapacitor/services/bigpanda"
 	"github.com/influxdata/kapacitor/services/config"
@@ -34,6 +35,7 @@ import (
 	"github.com/influxdata/kapacitor/services/dns"
 	"github.com/influxdata/kapacitor/services/ec2"
 	"github.com/influxdata/kapacitor/services/file_discovery"
+	"github.com/influxdata/kapacitor/services/fluxtask"
 	"github.com/influxdata/kapacitor/services/gce"
 	"github.com/influxdata/kapacitor/services/hipchat"
 	"github.com/influxdata/kapacitor/services/httpd"
@@ -74,9 +76,12 @@ import (
 	"github.com/influxdata/kapacitor/services/udf"
 	"github.com/influxdata/kapacitor/services/udp"
 	"github.com/influxdata/kapacitor/services/victorops"
+	"github.com/influxdata/kapacitor/services/zenoss"
+	"github.com/influxdata/kapacitor/task/taskmodel"
 	"github.com/influxdata/kapacitor/uuid"
 	"github.com/influxdata/kapacitor/waiter"
 	"github.com/pkg/errors"
+	"go.uber.org/zap/zapcore"
 )
 
 const clusterIDFilename = "cluster.id"
@@ -115,6 +120,8 @@ type Server struct {
 
 	TaskMaster       *kapacitor.TaskMaster
 	TaskMasterLookup *kapacitor.TaskMasterLookup
+
+	FluxTaskService taskmodel.TaskService
 
 	LoadService           *load.Service
 	SideloadService       *sideload.Service
@@ -222,7 +229,15 @@ func New(c *Config, buildInfo BuildInfo, diagService *diagnostic.Service) (*Serv
 	// Append Kapacitor services.
 	s.initHTTPDService()
 	s.appendStorageService()
-	s.appendAuthService()
+
+	if c.Auth.Enabled {
+		if err := s.appendEnabledAuthService(); err != nil {
+			return nil, err
+		}
+	} else {
+		s.appendNoAuthService()
+	}
+
 	s.appendConfigOverrideService()
 	s.appendTesterService()
 	s.appendSideloadService()
@@ -236,6 +251,10 @@ func New(c *Config, buildInfo BuildInfo, diagService *diagnostic.Service) (*Serv
 
 	if err := s.appendInfluxDBService(); err != nil {
 		return nil, errors.Wrap(err, "influxdb service")
+	}
+
+	if err := s.appendFluxTaskService(); err != nil {
+		return nil, errors.Wrap(err, "fluxtask service")
 	}
 
 	if err := s.appendLoadService(); err != nil {
@@ -274,6 +293,7 @@ func New(c *Config, buildInfo BuildInfo, diagService *diagnostic.Service) (*Serv
 	s.appendSensuService()
 	s.appendTalkService()
 	s.appendVictorOpsService()
+	s.appendZenossService()
 
 	// Append alert service
 	s.appendAlertService()
@@ -297,7 +317,9 @@ func New(c *Config, buildInfo BuildInfo, diagService *diagnostic.Service) (*Serv
 	}
 
 	// Append Scraper and discovery services
-	s.appendScraperService()
+	if err := s.appendScraperService(); err != nil {
+		return nil, errors.Wrap(err, "scraper service")
+	}
 
 	if err := s.appendK8sService(); err != nil {
 		return nil, errors.Wrap(err, "kubernetes service")
@@ -386,6 +408,17 @@ func (s *Server) initAlertService() {
 
 func (s *Server) appendAlertService() {
 	s.AppendService("alert", s.AlertService)
+}
+
+func (s *Server) appendFluxTaskService() error {
+	// TODO: hook into correct logging level instead of assuming info
+	logger := s.DiagService.NewZapLogger(zapcore.InfoLevel)
+	srv := fluxtask.New(s.config.FluxTask, logger)
+	srv.HTTPDService = s.HTTPDService
+	srv.InfluxDBService = s.InfluxDBService
+	srv.StorageService = s.StorageService
+	s.AppendService("fluxtask", srv)
+	return nil
 }
 
 func (s *Server) appendTesterService() {
@@ -578,13 +611,30 @@ func (s *Server) appendUDFService() {
 	s.AppendService("udf", srv)
 }
 
-func (s *Server) appendAuthService() {
+func (s *Server) appendNoAuthService() {
 	d := s.DiagService.NewNoAuthHandler()
 	srv := noauth.NewService(d)
 
 	s.AuthService = srv
 	s.HTTPDService.Handler.AuthService = srv
 	s.AppendService("auth", srv)
+}
+
+func (s *Server) appendEnabledAuthService() error {
+	d := s.DiagService.NewAuthHandler()
+
+	srv, err := authservice.NewService(s.config.Auth, d)
+	if err != nil {
+		return err
+	}
+	srv.HTTPDService = s.HTTPDService
+	srv.StorageService = s.StorageService
+
+	s.AuthService = srv
+	s.HTTPDService.Handler.AuthService = srv
+
+	s.AppendService("auth", srv)
+	return nil
 }
 
 func (s *Server) appendMQTTService() error {
@@ -921,7 +971,7 @@ func (s *Server) appendReportingService() {
 	}
 }
 
-func (s *Server) appendScraperService() {
+func (s *Server) appendScraperService() error {
 	c := s.config.Scraper
 	d := s.DiagService.NewScraperHandler()
 	srv := scraper.NewService(c, d)
@@ -929,6 +979,7 @@ func (s *Server) appendScraperService() {
 	s.ScraperService = srv
 	s.SetDynamicService("scraper", srv)
 	s.AppendService("scraper", srv)
+	return nil
 }
 
 func (s *Server) appendAzureService() {
@@ -1033,6 +1084,18 @@ func (s *Server) appendServiceNowService() {
 
 	s.SetDynamicService("servicenow", srv)
 	s.AppendService("servicenow", srv)
+}
+
+func (s *Server) appendZenossService() {
+	c := s.config.Zenoss
+	d := s.DiagService.NewZenossHandler()
+	srv := zenoss.NewService(c, d)
+
+	s.TaskMaster.ZenossService = srv
+	s.AlertService.ZenossService = srv
+
+	s.SetDynamicService("zenoss", srv)
+	s.AppendService("zenoss", srv)
 }
 
 // Err returns an error channel that multiplexes all out of band errors received from all services.

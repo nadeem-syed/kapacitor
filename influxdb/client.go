@@ -2,18 +2,24 @@ package influxdb
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/influxdata/flux"
+	"github.com/influxdata/flux/csv"
 	imodels "github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/v2/models"
 	khttp "github.com/influxdata/kapacitor/http"
 	"github.com/pkg/errors"
 )
@@ -27,10 +33,24 @@ type Client interface {
 	// Write takes a BatchPoints object and writes all Points to InfluxDB.
 	Write(bp BatchPoints) error
 
+	// WriteV2 takes a FluxWrite object and writes all Points to InfluxDB using the V2 interface.
+	WriteV2(w FluxWrite) error
+
 	// Query makes an InfluxDB Query on the database.
 	// The response is checked for an error and the is returned
 	// if it exists
 	Query(q Query) (*Response, error)
+
+	// QueryFlux is for querying Influxdb with the Flux language
+	// The response is checked for an error and the is returned
+	// if it exists
+	QueryFlux(q FluxQuery) (flux.ResultIterator, error)
+
+	// QueryFlux is for querying Influxdb with the Flux language
+	// The response is checked for an error and the is returned
+	// if it exists.  Unlike QueryFlux, this returns a *Response
+	// object.
+	QueryFluxResponse(q FluxQuery) (*Response, error)
 }
 
 type ClientUpdater interface {
@@ -61,6 +81,13 @@ type Query struct {
 	Precision string
 }
 
+type FluxQuery struct {
+	Org   string
+	OrgID string
+	Query string
+	Now   time.Time
+}
+
 // HTTPConfig is the config data needed to create an HTTP Client
 type Config struct {
 	// The URL of the InfluxDB server.
@@ -78,6 +105,9 @@ type Config struct {
 	// Transport is the HTTP transport to use for requests
 	// If nil, a default transport will be used.
 	Transport *http.Transport
+
+	// Which compression should we use for writing to influxdb, defaults to "gzip".
+	Compression string
 }
 
 // AuthenticationMethod defines the type of authentication used.
@@ -88,6 +118,7 @@ const (
 	NoAuthentication AuthenticationMethod = iota
 	UserAuthentication
 	BearerAuthentication
+	TokenAuthentication // like bearer authentication but with the word Token
 )
 
 // Set of credentials depending on the authentication method
@@ -106,11 +137,12 @@ type Credentials struct {
 
 // HTTPClient is safe for concurrent use.
 type HTTPClient struct {
-	mu     sync.RWMutex
-	config Config
-	urls   []url.URL
-	client *http.Client
-	index  int32
+	mu          sync.RWMutex
+	config      Config
+	urls        []url.URL
+	client      *http.Client
+	index       int32
+	compression string
 }
 
 // NewHTTPClient returns a new Client from the provided config.
@@ -133,6 +165,14 @@ func NewHTTPClient(conf Config) (*HTTPClient, error) {
 			Timeout:   conf.Timeout,
 			Transport: conf.Transport,
 		},
+	}
+	switch compression := strings.ToLower(strings.TrimSpace(conf.Compression)); compression {
+	case "none":
+		return c, nil
+	case "gzip", "": // treat gzip as default
+		c.compression = "gzip"
+	default:
+		return nil, fmt.Errorf("%s is not a supported compression type", compression)
 	}
 	return c, nil
 }
@@ -229,6 +269,8 @@ func (c *HTTPClient) do(req *http.Request, result interface{}, codes ...int) (*h
 		req.SetBasicAuth(cred.Username, cred.Password)
 	case BearerAuthentication:
 		req.Header.Set("Authorization", "Bearer "+cred.Token)
+	case TokenAuthentication:
+		req.Header.Set("Authorization", "Token "+cred.Token)
 	default:
 		return nil, errors.New("unknown authentication method set")
 	}
@@ -243,7 +285,102 @@ func (c *HTTPClient) do(req *http.Request, result interface{}, codes ...int) (*h
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	body := resp.Body
+	defer func() {
+		_, _ = io.Copy(ioutil.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	valid := false
+	for _, code := range codes {
+		if resp.StatusCode == code {
+			valid = true
+			break
+		}
+	}
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		body, err = gzip.NewReader(body)
+		if err != nil {
+			return nil, err
+		}
+		defer body.Close()
+	}
+
+	if !valid {
+		body, err := ioutil.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		d := json.NewDecoder(bytes.NewReader(body))
+		rp := struct {
+			Error string `json:"error"`
+		}{}
+		if err := d.Decode(&rp); err != nil {
+			return nil, err
+		}
+		if rp.Error != "" {
+			return nil, errors.New(rp.Error)
+		}
+		return nil, fmt.Errorf("invalid response: code %d", resp.StatusCode)
+	}
+
+	if result != nil {
+		d := json.NewDecoder(body)
+		d.UseNumber()
+		err = d.Decode(result)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to decode JSON")
+		}
+	}
+	return resp, nil
+}
+
+type readClose struct {
+	io.Reader
+	close func() error
+}
+
+func (r readClose) Close() error {
+	return r.close()
+}
+
+var _ io.ReadCloser = readClose{}
+
+func (c *HTTPClient) doFlux(req *http.Request, codes ...int) (io.ReadCloser, error) {
+	// Get current config
+	config := c.loadConfig()
+	// Set auth credentials
+	cred := config.Credentials
+	switch cred.Method {
+	case NoAuthentication:
+	case UserAuthentication:
+		req.SetBasicAuth(cred.Username, cred.Password)
+	case BearerAuthentication:
+		req.Header.Set("Authorization", "Bearer "+cred.Token)
+	case TokenAuthentication:
+		req.Header.Set("Authorization", "Token "+cred.Token)
+	default:
+		return nil, errors.New("unknown authentication method set")
+	}
+	// Set user agent
+	req.Header.Set("User-Agent", config.UserAgent)
+
+	// Get client
+	client := c.loadHTTPClient()
+	// Do request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	closer := func() error {
+		_, _ = io.Copy(ioutil.Discard, resp.Body)
+		return resp.Body.Close()
+	}
+	defer func() {
+		if closer != nil {
+			closer()
+		}
+	}()
 
 	valid := false
 	for _, code := range codes {
@@ -259,7 +396,9 @@ func (c *HTTPClient) do(req *http.Request, result interface{}, codes ...int) (*h
 		}
 		d := json.NewDecoder(bytes.NewReader(body))
 		rp := struct {
-			Error string `json:"error"`
+			Message string `json:"message"`
+			Code    string `json:"code"`
+			Error   string `json:"error"`
 		}{}
 		if err := d.Decode(&rp); err != nil {
 			return nil, err
@@ -267,17 +406,25 @@ func (c *HTTPClient) do(req *http.Request, result interface{}, codes ...int) (*h
 		if rp.Error != "" {
 			return nil, errors.New(rp.Error)
 		}
+		if rp.Message != "" {
+			return nil, errors.New(rp.Message)
+		}
 		return nil, fmt.Errorf("invalid response: code %d: body: %s", resp.StatusCode, string(body))
 	}
-	if result != nil {
-		d := json.NewDecoder(resp.Body)
-		d.UseNumber()
-		err := d.Decode(result)
+	body := resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		body, err = gzip.NewReader(resp.Body)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to decode JSON")
+			closer()
+			return nil, err
 		}
 	}
-	return resp, nil
+	reader := readClose{
+		Reader: body,
+		close:  closer,
+	}
+	closer = nil // so that we don't close the reader when we return
+	return reader, nil
 }
 
 // Ping will check to see if the server is up with an optional timeout on waiting for leader.
@@ -310,17 +457,8 @@ func (c *HTTPClient) Ping(ctx context.Context) (time.Duration, string, error) {
 }
 
 func (c *HTTPClient) Write(bp BatchPoints) error {
-	var b bytes.Buffer
+	b := &bytes.Buffer{}
 	precision := bp.Precision()
-	for _, p := range bp.Points() {
-		if _, err := b.Write(p.Bytes(precision)); err != nil {
-			return err
-		}
-
-		if err := b.WriteByte('\n'); err != nil {
-			return err
-		}
-	}
 
 	u := c.url()
 	u.Path = "write"
@@ -330,12 +468,71 @@ func (c *HTTPClient) Write(bp BatchPoints) error {
 	v.Set("precision", bp.Precision())
 	v.Set("consistency", bp.WriteConsistency())
 	u.RawQuery = v.Encode()
-	req, err := http.NewRequest("POST", u.String(), &b)
+
+	if c.compression == "gzip" {
+		bodyWriteCloser := gzip.NewWriter(b)
+		for _, p := range bp.Points() {
+			if _, err := bodyWriteCloser.Write(p.BytesWithLineFeed(precision)); err != nil {
+				return err
+			}
+		}
+		if err := bodyWriteCloser.Close(); err != nil {
+			return err
+		}
+
+	} else {
+		for _, p := range bp.Points() {
+			if _, err := b.Write(p.BytesWithLineFeed(precision)); err != nil {
+				return err
+			}
+		}
+	}
+
+	req, err := http.NewRequest("POST", u.String(), b)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	if c.compression == "gzip" {
+		req.Header.Set("Content-Encoding", "gzip")
+	}
 
+	_, err = c.do(req, nil, http.StatusNoContent, http.StatusOK)
+	return err
+}
+
+type FluxWrite struct {
+	Bucket string
+	Org    string
+	OrgID  string
+	Points models.Points
+}
+
+func (c *HTTPClient) WriteV2(w FluxWrite) error {
+	// TODO: make this more efficient and enable gzip
+	b := make([]byte, 0)
+
+	u := c.url()
+	u.Path = "api/v2/write"
+	v := url.Values{}
+	if w.Org != "" {
+		v.Set("org", w.Org)
+	}
+	if w.OrgID != "" {
+		v.Set("orgID", w.OrgID)
+	}
+	v.Set("bucket", w.Bucket)
+	u.RawQuery = v.Encode()
+
+	for _, p := range w.Points {
+		b = p.AppendString(b)
+	}
+	reader := bytes.NewReader(b)
+	req, err := http.NewRequest("POST", u.String(), reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
 	_, err = c.do(req, nil, http.StatusNoContent, http.StatusOK)
 	return err
 }
@@ -371,6 +568,90 @@ type Result struct {
 	Series   []imodels.Row
 	Messages []*Message
 	Err      string `json:"error,omitempty"`
+}
+
+func (c *HTTPClient) buildFluxRequest(q FluxQuery) (*http.Request, error) {
+	u := c.url()
+	if c.url().Path == "" || c.url().Path == "/" {
+		u.Path = "/api/v2/query"
+	}
+
+	v := url.Values{}
+	if q.Org != "" {
+		v.Set("org", q.Org)
+	}
+	if q.OrgID != "" {
+		v.Set("orgID", q.OrgID)
+	}
+	u.RawQuery = v.Encode()
+
+	type dialect struct {
+		Annotations []string `json:"annotations,omitempty"`
+		Delimiter   string   `json:"delimiter,omitempty"`
+		Header      bool     `json:"header"`
+	}
+	nowString := ""
+	if !q.Now.IsZero() {
+		nowString = q.Now.Format(time.RFC3339Nano)
+	}
+
+	body, err := json.Marshal(&struct {
+		Type    string  `json:"type"`
+		Now     string  `json:"now,omitempty"`
+		Query   string  `json:"query"`
+		Dialect dialect `json:"dialect"`
+	}{
+		Type:  "flux",
+		Now:   nowString,
+		Query: q.Query,
+		Dialect: dialect{
+			Annotations: []string{"datatype", "default", "group"},
+			Delimiter:   ",",
+			Header:      true,
+		},
+	})
+	req, err := http.NewRequest("POST", u.String(), bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept-Encoding", "gzip")
+	return req, nil
+}
+
+func (c *HTTPClient) QueryFluxResponse(q FluxQuery) (*Response, error) {
+	req, err := c.buildFluxRequest(q)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := c.doFlux(req, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := NewFluxQueryResponse(reader)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+
+}
+
+func (c *HTTPClient) QueryFlux(q FluxQuery) (flux.ResultIterator, error) {
+	req, err := c.buildFluxRequest(q)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := c.doFlux(req, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	decoder := csv.NewMultiResultDecoder(csv.ResultDecoderConfig{})
+	itr, err := decoder.Decode(reader)
+	if err != nil {
+		return nil, err
+	}
+	return itr, nil
 }
 
 // Query sends a command to the server and returns the Response
@@ -538,6 +819,33 @@ func (p Point) Bytes(precision string) []byte {
 	}
 
 	return bytes
+}
+
+func (p Point) BytesWithLineFeed(precision string) []byte {
+	key := imodels.MakeKey([]byte(p.Name), imodels.NewTags(p.Tags))
+	fields := imodels.Fields(p.Fields).MarshalBinary()
+	kl := len(key)
+	fl := len(fields)
+	var bytes []byte
+
+	if p.Time.IsZero() {
+		bytes = make([]byte, fl+kl+2)
+		copy(bytes, key)
+		bytes[kl] = ' '
+		copy(bytes[kl+1:], fields)
+	} else {
+		timeStr := strconv.FormatInt(p.Time.UnixNano()/imodels.GetPrecisionMultiplier(precision), 10)
+		tl := len(timeStr)
+		bytes = make([]byte, fl+kl+tl+3)
+		copy(bytes, key)
+		bytes[kl] = ' '
+		copy(bytes[kl+1:], fields)
+		bytes[kl+fl+1] = ' '
+		copy(bytes[kl+fl+2:], []byte(timeStr))
+	}
+	bytes[len(bytes)-1] = '\n'
+	return bytes
+
 }
 
 // Simple type to create github.com/influxdata/kapacitor/influxdb clients.

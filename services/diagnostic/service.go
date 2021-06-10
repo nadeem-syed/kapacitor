@@ -8,6 +8,9 @@ import (
 	"path"
 	"strings"
 	"sync"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type nopCloser struct {
@@ -342,6 +345,12 @@ func (s *Service) NewNoAuthHandler() *NoAuthHandler {
 	}
 }
 
+func (s *Service) NewAuthHandler() *AuthHandler {
+	return &AuthHandler{
+		l: s.Logger.With(String("service", "auth")),
+	}
+}
+
 func (s *Service) NewStatsHandler() *StatsHandler {
 	return &StatsHandler{
 		l: s.Logger.With(String("service", "stats")),
@@ -489,4 +498,19 @@ func (s *Service) NewServiceNowHandler() *ServiceNowHandler {
 	return &ServiceNowHandler{
 		l: s.Logger.With(String("service", "serviceNow")),
 	}
+}
+
+func (s *Service) NewZenossHandler() *ZenossHandler {
+	return &ZenossHandler{
+		l: s.Logger.With(String("service", "zenoss")),
+	}
+}
+
+func (s *Service) NewZapLogger(level zapcore.Level) *zap.Logger {
+	return zap.New(&zapAdapter{
+		LevelEnabler: zap.LevelEnablerFunc(func(l zapcore.Level) bool {
+			return l >= level
+		}),
+		out: s.Logger,
+	})
 }

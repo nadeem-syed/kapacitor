@@ -43,6 +43,7 @@ import (
 	"github.com/influxdata/kapacitor/services/telegram"
 	"github.com/influxdata/kapacitor/services/udp"
 	"github.com/influxdata/kapacitor/services/victorops"
+	"github.com/influxdata/kapacitor/services/zenoss"
 	"github.com/influxdata/kapacitor/udf"
 	"github.com/influxdata/kapacitor/uuid"
 	plog "github.com/prometheus/common/log"
@@ -1004,7 +1005,8 @@ type EC2Handler struct {
 func (h *EC2Handler) WithClusterContext(cluster string) ec2.Diagnostic {
 	return &EC2Handler{
 		ScraperHandler: &ScraperHandler{
-			l: h.ScraperHandler.l.With(String("cluster_id", cluster)),
+			l:   h.ScraperHandler.l.With(String("cluster_id", cluster)),
+			buf: &bytes.Buffer{},
 		},
 	}
 }
@@ -1031,6 +1033,17 @@ func (h *NoAuthHandler) FakedUserAuthentication(username string) {
 
 func (h *NoAuthHandler) FakedSubscriptionUserToken() {
 	h.l.Info("using noauth auth backend. Faked authentication for subscription user token")
+}
+
+type AuthHandler struct {
+	l Logger
+}
+
+func (h *AuthHandler) Error(msg string, err error, ctx ...keyvalue.T) {
+	Err(h.l, msg, err, ctx)
+}
+func (h *AuthHandler) Debug(msg string, ctx ...keyvalue.T) {
+	Debug(h.l, msg, ctx)
 }
 
 // Stats handler
@@ -1105,6 +1118,26 @@ type ScraperHandler struct {
 	mu  sync.Mutex
 	buf *bytes.Buffer
 	l   Logger
+}
+
+func NoOpScraperHandler() *ScraperHandler {
+	return &ScraperHandler{
+		buf: bytes.NewBuffer(nil),
+		l:   &NoOpLogger{},
+	}
+}
+
+func (h *ScraperHandler) Log(keyvals ...interface{}) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	defer h.buf.Reset()
+	for i := 0; i < len(keyvals)-1; i += 2 {
+		key := keyvals[i]
+		val := keyvals[i+1]
+		fmt.Fprintf(h.buf, "%v=%v", key, val)
+	}
+	h.l.Info(h.buf.String())
+	return nil
 }
 
 func (h *ScraperHandler) Debug(ctx ...interface{}) {
@@ -1234,7 +1267,8 @@ func (h *ScraperHandler) With(key string, value interface{}) plog.Logger {
 	}
 
 	return &ScraperHandler{
-		l: h.l.With(field),
+		l:   h.l.With(field),
+		buf: &bytes.Buffer{},
 	}
 }
 
@@ -1399,5 +1433,22 @@ func (h *ServiceNowHandler) WithContext(ctx ...keyvalue.T) servicenow.Diagnostic
 }
 
 func (h *ServiceNowHandler) Error(msg string, err error) {
+	h.l.Error(msg, Error(err))
+}
+
+// Zenoss handler
+type ZenossHandler struct {
+	l Logger
+}
+
+func (h *ZenossHandler) WithContext(ctx ...keyvalue.T) zenoss.Diagnostic {
+	fields := logFieldsFromContext(ctx)
+
+	return &ZenossHandler{
+		l: h.l.With(fields...),
+	}
+}
+
+func (h *ZenossHandler) Error(msg string, err error) {
 	h.l.Error(msg, Error(err))
 }

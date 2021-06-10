@@ -158,7 +158,7 @@ func (n *AlertNode) Build(a *pipeline.AlertNode) (ast.Node, error) {
 	}
 
 	for _, h := range a.ServiceNowHandlers {
-		n.Dot("servicenow").
+		n.Dot("serviceNow").
 			Dot("source", h.Source).
 			Dot("node", h.Node).
 			Dot("type", h.Type).
@@ -175,6 +175,13 @@ func (n *AlertNode) Build(a *pipeline.AlertNode) (ast.Node, error) {
 		for _, k := range keys {
 			n.Dot("additionalInfo", k, h.AdditionalInfoMap[k])
 		}
+	}
+
+	for _, h := range a.BigPandaHandlers {
+		n.Dot("bigPanda").
+			Dot("appKey", h.AppKey).
+			Dot("primaryProperty", h.PrimaryProperty).
+			Dot("secondaryProperty", h.SecondaryProperty)
 	}
 
 	for _, h := range a.SlackHandlers {
@@ -203,6 +210,8 @@ func (n *AlertNode) Build(a *pipeline.AlertNode) (ast.Node, error) {
 		n.Dot("kafka").
 			Dot("cluster", h.Cluster).
 			Dot("kafkaTopic", h.KafkaTopic).
+			DotIf("disablePartitionById", h.IsDisablePartitionById).
+			Dot("partitionHashAlgorithm", h.PartitionHashAlgorithm).
 			Dot("template", h.Template)
 	}
 
@@ -247,6 +256,36 @@ func (n *AlertNode) Build(a *pipeline.AlertNode) (ast.Node, error) {
 		for _, d := range h.DataList {
 			n.Dot("data", d.Oid, d.Type, d.Value)
 		}
+	}
+
+	for _, h := range a.ZenossHandlers {
+		n.Dot("zenoss").
+			Dot("action", h.Action).
+			Dot("method", h.Method).
+			Dot("type", h.Type).
+			Dot("tid", h.Tid).
+			// standard event data element fields
+			Dot("summary", h.Summary).
+			Dot("device", h.Device).
+			Dot("component", h.Component).
+			Dot("eventClassKey", h.EventClassKey).
+			Dot("eventClass", h.EventClass).
+			Dot("collector", h.Collector).
+			Dot("message", h.Message)
+
+		// Use stable key order
+		keys := make([]string, 0, len(h.CustomFieldsMap))
+		for k := range h.CustomFieldsMap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			n.Dot("customField", k, h.CustomFieldsMap[k])
+		}
+	}
+	for _, h := range a.TeamsHandlers {
+		n.Dot("teams").
+			Dot("channelURL", h.ChannelURL)
 	}
 
 	return n.prev, n.err

@@ -44,7 +44,7 @@ var skipVerify = mainFlags.Bool("skipVerify", false, "Disable SSL verification (
 
 var l = log.New(os.Stderr, "[run] ", log.LstdFlags)
 
-var cli *client.Client
+var kCli *client.Client
 
 var usageStr = `
 Usage: kapacitor [options] [command] [args]
@@ -69,6 +69,7 @@ Commands:
 	show-template         Display detailed information about a template.
 	show-topic-handler    Display detailed information about an alert handler for a topic.
 	show-topic            Display detailed information about an alert topic.
+	flux                  Flux task information and management
 	backup                Backup the Kapacitor database.
 	level                 Sets the logging level on the kapacitord server.
 	stats                 Display various stats about Kapacitor.
@@ -112,7 +113,7 @@ func main() {
 	}
 
 	var err error
-	cli, err = connect(url, skipSSL)
+	kCli, err = connect(url, skipSSL)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(4)
@@ -194,6 +195,9 @@ func main() {
 	case "show-topic":
 		commandArgs = args
 		commandF = doShowTopic
+	case "flux":
+		commandArgs = args
+		commandF = doFluxTasks(url, skipSSL)
 	case "backup":
 		commandArgs = args
 		commandF = doBackup
@@ -295,6 +299,9 @@ func doHelp(args []string) error {
 			showTopicHandlerUsage()
 		case "show-topic":
 			showTopicUsage()
+		case "flux":
+			app := createFluxTaskApp("", false)
+			app.Run([]string{"", "-h"})
 		case "backup":
 			backupUsage()
 		case "watch":
@@ -341,11 +348,12 @@ var (
 	rbId             = recordBatchFlags.String("recording-id", "", "The ID to give to this recording. If not set an random ID is chosen.")
 
 	recordQueryFlags = flag.NewFlagSet("record-query", flag.ExitOnError)
-	rqQuery          = recordQueryFlags.String("query", "", "The query to record.")
-	rqType           = recordQueryFlags.String("type", "", "The type of the recording to save (stream|batch).")
-	rqCluster        = recordQueryFlags.String("cluster", "", "Optional named InfluxDB cluster from configuration.")
-	rqNowait         = recordQueryFlags.Bool("no-wait", false, "Do not wait for the recording to finish.")
-	rqId             = recordQueryFlags.String("recording-id", "", "The ID to give to this recording. If not set an random ID is chosen.")
+	// TODO: queryFlux recording
+	rqQuery   = recordQueryFlags.String("query", "", "The query to record.")
+	rqType    = recordQueryFlags.String("type", "", "The type of the recording to save (stream|batch).")
+	rqCluster = recordQueryFlags.String("cluster", "", "Optional named InfluxDB cluster from configuration.")
+	rqNowait  = recordQueryFlags.Bool("no-wait", false, "Do not wait for the recording to finish.")
+	rqId      = recordQueryFlags.String("recording-id", "", "The ID to give to this recording. If not set an random ID is chosen.")
 )
 
 func recordUsage() {
@@ -453,7 +461,7 @@ func doRecord(args []string) error {
 			return err
 		}
 		noWait = *rsNowait
-		recording, err = cli.RecordStream(client.RecordStreamOptions{
+		recording, err = kCli.RecordStream(client.RecordStreamOptions{
 			ID:   *rsId,
 			Task: *rsTask,
 			Stop: time.Now().Add(duration),
@@ -496,7 +504,7 @@ func doRecord(args []string) error {
 			start = stop.Add(-1 * past)
 		}
 		noWait = *rbNowait
-		recording, err = cli.RecordBatch(client.RecordBatchOptions{
+		recording, err = kCli.RecordBatch(client.RecordBatchOptions{
 			ID:    *rbId,
 			Task:  *rbTask,
 			Start: start,
@@ -519,7 +527,7 @@ func doRecord(args []string) error {
 			typ = client.BatchTask
 		}
 		noWait = *rqNowait
-		recording, err = cli.RecordQuery(client.RecordQueryOptions{
+		recording, err = kCli.RecordQuery(client.RecordQueryOptions{
 			ID:      *rqId,
 			Query:   *rqQuery,
 			Type:    typ,
@@ -532,12 +540,11 @@ func doRecord(args []string) error {
 		return fmt.Errorf("Unknown record type %q, expected 'stream', 'batch' or 'query'", args[0])
 	}
 	if noWait {
-		fmt.Println(recording.ID)
 		return nil
 	}
 	for recording.Status == client.Running {
 		time.Sleep(500 * time.Millisecond)
-		recording, err = cli.Recording(recording.Link)
+		recording, err = kCli.Recording(recording.Link)
 		if err != nil {
 			return err
 		}
@@ -746,8 +753,8 @@ func doDefine(args []string) error {
 		}
 	}
 
-	l := cli.TaskLink(id)
-	task, _ := cli.Task(l, nil)
+	l := kCli.TaskLink(id)
+	task, _ := kCli.Task(l, nil)
 	var err error
 	if task.ID == "" {
 		if *dfile != "" {
@@ -760,7 +767,7 @@ func doDefine(args []string) error {
 			if err != nil {
 				return err
 			}
-			_, err = cli.CreateTask(o)
+			_, err = kCli.CreateTask(o)
 			if err != nil {
 				return err
 			}
@@ -774,7 +781,7 @@ func doDefine(args []string) error {
 				Vars:       vars,
 				Status:     client.Disabled,
 			}
-			_, err = cli.CreateTask(o)
+			_, err = kCli.CreateTask(o)
 			if err != nil {
 				return err
 			}
@@ -792,7 +799,7 @@ func doDefine(args []string) error {
 				return errors.New("Task id given on command line does not match id in " + *dfile)
 			}
 
-			_, err = cli.UpdateTask(
+			_, err = kCli.UpdateTask(
 				l,
 				o,
 			)
@@ -807,7 +814,7 @@ func doDefine(args []string) error {
 				TICKscript: script,
 				Vars:       vars,
 			}
-			_, err = cli.UpdateTask(
+			_, err = kCli.UpdateTask(
 				l,
 				o,
 			)
@@ -818,11 +825,11 @@ func doDefine(args []string) error {
 	}
 
 	if !*dnoReload && task.Status == client.Enabled {
-		_, err := cli.UpdateTask(l, client.UpdateTaskOptions{Status: client.Disabled})
+		_, err := kCli.UpdateTask(l, client.UpdateTaskOptions{Status: client.Disabled})
 		if err != nil {
 			return err
 		}
-		_, err = cli.UpdateTask(l, client.UpdateTaskOptions{Status: client.Enabled})
+		_, err = kCli.UpdateTask(l, client.UpdateTaskOptions{Status: client.Enabled})
 		if err != nil {
 			return err
 		}
@@ -901,17 +908,17 @@ func doDefineTemplate(args []string) error {
 		ttype = client.BatchTask
 	}
 
-	l := cli.TemplateLink(id)
-	template, _ := cli.Template(l, nil)
+	l := kCli.TemplateLink(id)
+	template, _ := kCli.Template(l, nil)
 	var err error
 	if template.ID == "" {
-		_, err = cli.CreateTemplate(client.CreateTemplateOptions{
+		_, err = kCli.CreateTemplate(client.CreateTemplateOptions{
 			ID:         id,
 			Type:       ttype,
 			TICKscript: script,
 		})
 	} else {
-		_, err = cli.UpdateTemplate(
+		_, err = kCli.UpdateTemplate(
 			l,
 			client.UpdateTemplateOptions{
 				Type:       ttype,
@@ -970,12 +977,12 @@ func doDefineTopicHandler(args []string) error {
 		}
 	}
 
-	l := cli.TopicHandlerLink(ho.Topic, ho.ID)
-	handler, _ := cli.TopicHandler(l)
+	l := kCli.TopicHandlerLink(ho.Topic, ho.ID)
+	handler, _ := kCli.TopicHandler(l)
 	if handler.ID == "" {
-		_, err = cli.CreateTopicHandler(cli.TopicHandlersLink(ho.Topic), ho)
+		_, err = kCli.CreateTopicHandler(kCli.TopicHandlersLink(ho.Topic), ho)
 	} else {
-		_, err = cli.ReplaceTopicHandler(l, ho)
+		_, err = kCli.ReplaceTopicHandler(l, ho)
 	}
 	return err
 }
@@ -1023,7 +1030,7 @@ func doReplay(args []string) error {
 	if *rreal {
 		clk = client.Real
 	}
-	replay, err := cli.CreateReplay(client.CreateReplayOptions{
+	replay, err := kCli.CreateReplay(client.CreateReplayOptions{
 		ID:            *rid,
 		Task:          *rtask,
 		Recording:     *rrecording,
@@ -1034,12 +1041,11 @@ func doReplay(args []string) error {
 		return err
 	}
 	if *rnowait {
-		fmt.Println(replay.ID)
 		return nil
 	}
 	for replay.Status == client.Running {
 		time.Sleep(500 * time.Millisecond)
-		replay, err = cli.Replay(replay.Link)
+		replay, err = kCli.Replay(replay.Link)
 		if err != nil {
 			return err
 		}
@@ -1181,7 +1187,7 @@ func doReplayLive(args []string) error {
 		if *rlbReal {
 			clk = client.Real
 		}
-		replay, err = cli.ReplayBatch(client.ReplayBatchOptions{
+		replay, err = kCli.ReplayBatch(client.ReplayBatchOptions{
 			ID:            *rlbId,
 			Task:          *rlbTask,
 			Start:         start,
@@ -1203,7 +1209,7 @@ func doReplayLive(args []string) error {
 		if *rlqReal {
 			clk = client.Real
 		}
-		replay, err = cli.ReplayQuery(client.ReplayQueryOptions{
+		replay, err = kCli.ReplayQuery(client.ReplayQueryOptions{
 			ID:            *rlqId,
 			Task:          *rlqTask,
 			Query:         *rlqQuery,
@@ -1218,12 +1224,11 @@ func doReplayLive(args []string) error {
 		return fmt.Errorf("Unknown replay-live type %q, expected 'batch' or 'query'", args[0])
 	}
 	if noWait {
-		fmt.Println(replay.ID)
 		return nil
 	}
 	for replay.Status == client.Running {
 		time.Sleep(500 * time.Millisecond)
-		replay, err = cli.Replay(replay.Link)
+		replay, err = kCli.Replay(replay.Link)
 		if err != nil {
 			return err
 		}
@@ -1268,7 +1273,7 @@ func doEnable(args []string) error {
 	for _, pattern := range args {
 		offset := 0
 		for {
-			tasks, err := cli.ListTasks(&client.ListTasksOptions{
+			tasks, err := kCli.ListTasks(&client.ListTasksOptions{
 				Pattern: pattern,
 				Fields:  []string{"link"},
 				Offset:  offset,
@@ -1278,7 +1283,7 @@ func doEnable(args []string) error {
 				return errors.Wrap(err, "listing tasks")
 			}
 			for _, task := range tasks {
-				_, err := cli.UpdateTask(
+				_, err := kCli.UpdateTask(
 					task.Link,
 					client.UpdateTaskOptions{Status: client.Enabled},
 				)
@@ -1326,7 +1331,7 @@ func doDisable(args []string) error {
 	for _, pattern := range args {
 		offset := 0
 		for {
-			tasks, err := cli.ListTasks(&client.ListTasksOptions{
+			tasks, err := kCli.ListTasks(&client.ListTasksOptions{
 				Pattern: pattern,
 				Fields:  []string{"link"},
 				Offset:  offset,
@@ -1336,7 +1341,7 @@ func doDisable(args []string) error {
 				return errors.Wrap(err, "listing tasks")
 			}
 			for _, task := range tasks {
-				_, err := cli.UpdateTask(
+				_, err := kCli.UpdateTask(
 					task.Link,
 					client.UpdateTaskOptions{Status: client.Disabled},
 				)
@@ -1411,8 +1416,8 @@ func doShow(args []string) error {
 		os.Exit(2)
 	}
 
-	t, err := cli.Task(
-		cli.TaskLink(args[0]),
+	t, err := kCli.Task(
+		kCli.TaskLink(args[0]),
 		&client.TaskOptions{ReplayID: *sReplayId},
 	)
 	if err != nil {
@@ -1495,7 +1500,7 @@ func doShowTemplate(args []string) error {
 		os.Exit(2)
 	}
 
-	t, err := cli.Template(cli.TemplateLink(args[0]), nil)
+	t, err := kCli.Template(kCli.TemplateLink(args[0]), nil)
 	if err != nil {
 		return err
 	}
@@ -1552,7 +1557,7 @@ func doShowTopicHandler(args []string) error {
 
 	topic := args[0]
 	handler := args[1]
-	h, err := cli.TopicHandler(cli.TopicHandlerLink(topic, handler))
+	h, err := kCli.TopicHandler(kCli.TopicHandlerLink(topic, handler))
 	if err != nil {
 		return err
 	}
@@ -1592,11 +1597,11 @@ func doShowTopic(args []string) error {
 		os.Exit(2)
 	}
 
-	topic, err := cli.Topic(cli.TopicLink(args[0]))
+	topic, err := kCli.Topic(kCli.TopicLink(args[0]))
 	if err != nil {
 		return err
 	}
-	te, err := cli.ListTopicEvents(topic.EventsLink, nil)
+	te, err := kCli.ListTopicEvents(topic.EventsLink, nil)
 	if err != nil {
 		return err
 	}
@@ -1613,7 +1618,7 @@ func doShowTopic(args []string) error {
 
 	sort.Sort(topicEvents(te.Events))
 
-	th, err := cli.ListTopicHandlers(topic.HandlersLink, nil)
+	th, err := kCli.ListTopicHandlers(topic.HandlersLink, nil)
 	if err != nil {
 		return err
 	}
@@ -1633,6 +1638,13 @@ func doShowTopic(args []string) error {
 		fmt.Printf(outFmt, e.ID, e.State.Level, e.State.Message, e.State.Time.Local().Format(time.RFC822))
 	}
 	return nil
+}
+
+func doFluxTasks(url string, skipSSL bool) func([]string) error {
+	return func(args []string) error {
+		app := createFluxTaskApp(url, skipSSL)
+		return app.Run(append([]string{""}, args...))
+	}
 }
 
 // List
@@ -1695,7 +1707,7 @@ func doList(args []string) error {
 		for _, pattern := range patterns {
 			offset := 0
 			for {
-				tasks, err := cli.ListTasks(&client.ListTasksOptions{
+				tasks, err := kCli.ListTasks(&client.ListTasksOptions{
 					Pattern: pattern,
 					Fields:  []string{"type", "status", "executing", "dbrps"},
 					Offset:  offset,
@@ -1728,7 +1740,7 @@ func doList(args []string) error {
 		for _, pattern := range patterns {
 			offset := 0
 			for {
-				templates, err := cli.ListTemplates(&client.ListTemplatesOptions{
+				templates, err := kCli.ListTemplates(&client.ListTemplatesOptions{
 					Pattern: pattern,
 					Fields:  []string{"type", "vars"},
 					Offset:  offset,
@@ -1768,7 +1780,7 @@ func doList(args []string) error {
 		for _, pattern := range patterns {
 			offset := 0
 			for {
-				recordings, err := cli.ListRecordings(&client.ListRecordingsOptions{
+				recordings, err := kCli.ListRecordings(&client.ListRecordingsOptions{
 					Pattern: pattern,
 					Fields:  []string{"type", "size", "date", "status"},
 					Offset:  offset,
@@ -1804,7 +1816,7 @@ func doList(args []string) error {
 		for _, pattern := range patterns {
 			offset := 0
 			for {
-				replays, err := cli.ListReplays(&client.ListReplaysOptions{
+				replays, err := kCli.ListReplays(&client.ListReplaysOptions{
 					Pattern: pattern,
 					Fields:  []string{"task", "recording", "status", "clock", "date"},
 					Offset:  offset,
@@ -1841,7 +1853,7 @@ func doList(args []string) error {
 		outFmt := "%s\n"
 		fmt.Fprintf(os.Stdout, outFmt, "Service Name")
 		for _, pattern := range patterns {
-			serviceTests, err := cli.ListServiceTests(&client.ListServiceTestsOptions{
+			serviceTests, err := kCli.ListServiceTests(&client.ListServiceTestsOptions{
 				Pattern: pattern,
 			})
 			if err != nil {
@@ -1854,7 +1866,7 @@ func doList(args []string) error {
 		}
 	case "topic-handlers":
 		topicPattern := patterns[0]
-		topics, err := cli.ListTopics(&client.ListTopicsOptions{
+		topics, err := kCli.ListTopics(&client.ListTopicsOptions{
 			Pattern: topicPattern,
 		})
 		if err != nil {
@@ -1877,7 +1889,7 @@ func doList(args []string) error {
 		var allHandlers []info
 		for _, topic := range topics.Topics {
 			for _, pattern := range patterns {
-				handlers, err := cli.ListTopicHandlers(topic.HandlersLink, &client.ListTopicHandlersOptions{
+				handlers, err := kCli.ListTopicHandlers(topic.HandlersLink, &client.ListTopicHandlersOptions{
 					Pattern: pattern,
 				})
 				if err != nil {
@@ -1913,7 +1925,7 @@ func doList(args []string) error {
 		// The topics are returned in sorted order already, no need to sort them here.
 		var allTopics []client.Topic
 		for _, pattern := range patterns {
-			topics, err := cli.ListTopics(&client.ListTopicsOptions{
+			topics, err := kCli.ListTopics(&client.ListTopicsOptions{
 				Pattern: pattern,
 			})
 			if err != nil {
@@ -1987,7 +1999,7 @@ func doDelete(args []string) error {
 	case "tasks":
 		for _, pattern := range args[1:] {
 			for {
-				tasks, err := cli.ListTasks(&client.ListTasksOptions{
+				tasks, err := kCli.ListTasks(&client.ListTasksOptions{
 					Pattern: pattern,
 					Fields:  []string{"link"},
 					Limit:   limit,
@@ -1996,7 +2008,7 @@ func doDelete(args []string) error {
 					return err
 				}
 				for _, task := range tasks {
-					err := cli.DeleteTask(task.Link)
+					err := kCli.DeleteTask(task.Link)
 					if err != nil {
 						return err
 					}
@@ -2009,7 +2021,7 @@ func doDelete(args []string) error {
 	case "templates":
 		for _, pattern := range args[1:] {
 			for {
-				templates, err := cli.ListTemplates(&client.ListTemplatesOptions{
+				templates, err := kCli.ListTemplates(&client.ListTemplatesOptions{
 					Pattern: pattern,
 					Fields:  []string{"link"},
 					Limit:   limit,
@@ -2018,7 +2030,7 @@ func doDelete(args []string) error {
 					return err
 				}
 				for _, template := range templates {
-					err := cli.DeleteTemplate(template.Link)
+					err := kCli.DeleteTemplate(template.Link)
 					if err != nil {
 						return err
 					}
@@ -2031,7 +2043,7 @@ func doDelete(args []string) error {
 	case "recordings":
 		for _, pattern := range args[1:] {
 			for {
-				recordings, err := cli.ListRecordings(&client.ListRecordingsOptions{
+				recordings, err := kCli.ListRecordings(&client.ListRecordingsOptions{
 					Pattern: pattern,
 					Fields:  []string{"link"},
 					Limit:   limit,
@@ -2040,7 +2052,7 @@ func doDelete(args []string) error {
 					return err
 				}
 				for _, recording := range recordings {
-					err := cli.DeleteRecording(recording.Link)
+					err := kCli.DeleteRecording(recording.Link)
 					if err != nil {
 						return err
 					}
@@ -2053,7 +2065,7 @@ func doDelete(args []string) error {
 	case "replays":
 		for _, pattern := range args[1:] {
 			for {
-				replays, err := cli.ListReplays(&client.ListReplaysOptions{
+				replays, err := kCli.ListReplays(&client.ListReplaysOptions{
 					Pattern: pattern,
 					Fields:  []string{"link"},
 					Limit:   limit,
@@ -2062,7 +2074,7 @@ func doDelete(args []string) error {
 					return err
 				}
 				for _, replay := range replays {
-					err := cli.DeleteReplay(replay.Link)
+					err := kCli.DeleteReplay(replay.Link)
 					if err != nil {
 						return err
 					}
@@ -2074,14 +2086,14 @@ func doDelete(args []string) error {
 		}
 	case "topics":
 		for _, pattern := range args[1:] {
-			topics, err := cli.ListTopics(&client.ListTopicsOptions{
+			topics, err := kCli.ListTopics(&client.ListTopicsOptions{
 				Pattern: pattern,
 			})
 			if err != nil {
 				return err
 			}
 			for _, t := range topics.Topics {
-				err := cli.DeleteTopic(t.Link)
+				err := kCli.DeleteTopic(t.Link)
 				if err != nil {
 					return err
 				}
@@ -2090,14 +2102,14 @@ func doDelete(args []string) error {
 	case "topic-handlers":
 		topic := args[1]
 		for _, pattern := range args[2:] {
-			handlers, err := cli.ListTopicHandlers(cli.TopicHandlersLink(topic), &client.ListTopicHandlersOptions{
+			handlers, err := kCli.ListTopicHandlers(kCli.TopicHandlersLink(topic), &client.ListTopicHandlersOptions{
 				Pattern: pattern,
 			})
 			if err != nil {
 				return err
 			}
 			for _, h := range handlers.Handlers {
-				err := cli.DeleteTopicHandler(h.Link)
+				err := kCli.DeleteTopicHandler(h.Link)
 				if err != nil {
 					return err
 				}
@@ -2124,7 +2136,7 @@ func doLevel(args []string) error {
 		levelUsage()
 		os.Exit(2)
 	}
-	return cli.LogLevel(args[0])
+	return kCli.LogLevel(args[0])
 }
 
 // Stats
@@ -2165,7 +2177,7 @@ func doStats(args []string) error {
 		statsUsage()
 		return errors.New("must provide a stats category")
 	}
-	vars, err := cli.DebugVars()
+	vars, err := kCli.DebugVars()
 	if err != nil {
 		return err
 	}
@@ -2262,7 +2274,7 @@ func varsUsage() {
 }
 
 func doVars(args []string) error {
-	r, err := http.Get(cli.URL() + "/kapacitor/v1/debug/vars")
+	r, err := http.Get(kCli.URL() + "/kapacitor/v1/debug/vars")
 	if err != nil {
 		return err
 	}
@@ -2287,7 +2299,7 @@ func doServiceTest(args []string) error {
 	}
 	var services []client.ServiceTest
 	for _, nameOrPattern := range args {
-		s, err := cli.ListServiceTests(&client.ListServiceTestsOptions{
+		s, err := kCli.ListServiceTests(&client.ListServiceTestsOptions{
 			Pattern: nameOrPattern,
 		})
 		if err != nil {
@@ -2297,7 +2309,7 @@ func doServiceTest(args []string) error {
 	}
 	results := make([]client.ServiceTestResult, len(services))
 	for i, s := range services {
-		tr, err := cli.DoServiceTest(s.Link, nil)
+		tr, err := kCli.DoServiceTest(s.Link, nil)
 		if err != nil {
 			return err
 		}
@@ -2332,7 +2344,7 @@ func doBackup(args []string) error {
 		return errors.Wrap(err, "failed to create backup file")
 	}
 	defer f.Close()
-	size, backup, err := cli.Backup()
+	size, backup, err := kCli.Backup()
 	if err != nil {
 		return errors.Wrap(err, "failed to perform backup")
 	}
@@ -2414,7 +2426,7 @@ func tailLogs(m map[string]string) error {
 		done = true
 	}()
 
-	err := cli.Logs(ctx, os.Stdout, m)
+	err := kCli.Logs(ctx, os.Stdout, m)
 	mu.Lock()
 	defer mu.Unlock()
 	if err != nil && !done {

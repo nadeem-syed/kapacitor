@@ -1,8 +1,9 @@
 package bigpanda
 
 import (
-	"github.com/pkg/errors"
 	"net/url"
+
+	"github.com/pkg/errors"
 )
 
 const (
@@ -13,7 +14,7 @@ type Config struct {
 	// Whether BigPanda integration is enabled.
 	Enabled bool `toml:"enabled" override:"enabled"`
 
-	// Whether all alerts should automatically post to Teams.
+	// Whether all alerts should automatically post to BigPanda.
 	Global bool `toml:"global" override:"global"`
 
 	//Each integration must have an App Key in BigPanda to identify it as a unique source.
@@ -26,10 +27,10 @@ type Config struct {
 	// Only applies if global is also set.
 	StateChangesOnly bool `toml:"state-changes-only" override:"state-changes-only"`
 
-	// Whether to skip the tls verification of the alerta host
+	// Whether to skip the tls verification
 	InsecureSkipVerify bool `toml:"insecure-skip-verify" override:"insecure-skip-verify"`
 
-	//Optional alert api URL, if not specified https://api.bigpanda.io/data/v2/alerts is used
+	//BigPanda Alert api URL, if not specified https://api.bigpanda.io/data/v2/alerts is used
 	URL string `toml:"url" override:"url"`
 }
 
@@ -40,6 +41,10 @@ func NewConfig() Config {
 }
 
 func (c Config) Validate() error {
+	if c.Enabled && c.URL == "" {
+		return errors.New("must specify the BigPanda webhook URL")
+	}
+
 	if c.Enabled && c.AppKey == "" {
 		return errors.New("must specify BigPanda app-key")
 	}

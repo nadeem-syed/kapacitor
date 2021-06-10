@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/influxdata/flux"
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	influxcli "github.com/influxdata/kapacitor/influxdb"
@@ -1152,6 +1153,7 @@ func NewDefaultTestConfigs(clusters []string) []influxdb.Config {
 			Default:              true,
 			SubscriptionProtocol: "http",
 			StartUpTimeout:       0,
+			Compression:          "gzip",
 			// Do not start syncing goroutines
 			SubscriptionSyncInterval: 0,
 		}
@@ -1236,12 +1238,17 @@ func (c *clientCreator) Create(config influxcli.Config) (influxcli.ClientUpdater
 }
 
 type influxDBClient struct {
-	clusterName string
-	PingFunc    func(ctx context.Context) (time.Duration, string, error)
-	WriteFunc   func(bp influxcli.BatchPoints) error
-	QueryFunc   func(clusterName string, q influxcli.Query) (*influxcli.Response, error)
-	UpdateFunc  func(influxcli.Config) error
+	clusterName           string
+	PingFunc              func(ctx context.Context) (time.Duration, string, error)
+	WriteFunc             func(bp influxcli.BatchPoints) error
+	QueryFunc             func(clusterName string, q influxcli.Query) (*influxcli.Response, error)
+	FluxQueryResponseFunc func(clusterName string, q influxcli.FluxQuery) (*influxcli.Response, error)
+	FluxQueryFunc         func(clusterName string, q influxcli.FluxQuery) (flux.ResultIterator, error)
+	UpdateFunc            func(influxcli.Config) error
+	WriteV2Func           func(clusterName string, w influxcli.FluxWrite) error
 }
+
+var _ influxcli.ClientUpdater = influxDBClient{}
 
 func (c influxDBClient) Close() error {
 	return nil
@@ -1253,18 +1260,42 @@ func (c influxDBClient) Ping(ctx context.Context) (time.Duration, string, error)
 	}
 	return 0, "testversion", nil
 }
+
 func (c influxDBClient) Write(bp influxcli.BatchPoints) error {
 	if c.WriteFunc != nil {
 		return c.WriteFunc(bp)
 	}
 	return nil
 }
+
+func (c influxDBClient) WriteV2(w influxcli.FluxWrite) error {
+	if c.WriteV2Func != nil {
+		return c.WriteV2Func(c.clusterName, w)
+	}
+	return nil
+}
+
 func (c influxDBClient) Query(q influxcli.Query) (*influxcli.Response, error) {
 	if c.QueryFunc != nil {
 		return c.QueryFunc(c.clusterName, q)
 	}
 	return &influxcli.Response{}, nil
 }
+
+func (c influxDBClient) QueryFlux(q influxcli.FluxQuery) (flux.ResultIterator, error) {
+	if c.FluxQueryFunc != nil {
+		return c.FluxQueryFunc(c.clusterName, q)
+	}
+	return nil, nil
+}
+
+func (c influxDBClient) QueryFluxResponse(q influxcli.FluxQuery) (*influxcli.Response, error) {
+	if c.FluxQueryResponseFunc != nil {
+		return c.FluxQueryResponseFunc(c.clusterName, q)
+	}
+	return &influxcli.Response{}, nil
+}
+
 func (c influxDBClient) Update(config influxcli.Config) error {
 	if c.UpdateFunc != nil {
 		return c.UpdateFunc(config)

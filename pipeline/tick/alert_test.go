@@ -118,6 +118,74 @@ func TestAlertHTTPPost(t *testing.T) {
 	PipelineTickTestHelper(t, pipe, want)
 }
 
+func TestAlertBigPanda(t *testing.T) {
+	pipe, _, from := StreamFrom()
+	handler := from.Alert().BigPanda()
+	handler.AppKey = "A"
+	handler.PrimaryProperty = "B"
+	handler.SecondaryProperty = "C"
+
+	want := `stream
+    |from()
+    |alert()
+        .id('{{ .Name }}:{{ .Group }}')
+        .message('{{ .ID }} is {{ .Level }}')
+        .details('{{ json . }}')
+        .history(21)
+        .bigPanda()
+        .appKey('A')
+        .primaryProperty('B')
+        .secondaryProperty('C')
+`
+	PipelineTickTestHelper(t, pipe, want)
+}
+
+func TestAlertServiceNow(t *testing.T) {
+	pipe, _, from := StreamFrom()
+	handler := from.Alert().ServiceNow()
+	handler.Source = "A"
+	handler.Node = "B"
+	handler.Type = "C"
+	handler.Resource = "D"
+	handler.MetricName = "E"
+	handler.MessageKey = "F"
+
+	want := `stream
+    |from()
+    |alert()
+        .id('{{ .Name }}:{{ .Group }}')
+        .message('{{ .ID }} is {{ .Level }}')
+        .details('{{ json . }}')
+        .history(21)
+        .serviceNow()
+        .source('A')
+        .node('B')
+        .type('C')
+        .resource('D')
+        .metricName('E')
+        .messageKey('F')
+`
+	PipelineTickTestHelper(t, pipe, want)
+}
+
+func TestAlertTeams(t *testing.T) {
+	pipe, _, from := StreamFrom()
+	handler := from.Alert().Teams()
+	handler.ChannelURL = "https://..."
+
+	want := `stream
+    |from()
+    |alert()
+        .id('{{ .Name }}:{{ .Group }}')
+        .message('{{ .ID }} is {{ .Level }}')
+        .details('{{ json . }}')
+        .history(21)
+        .teams()
+        .channelURL('https://...')
+`
+	PipelineTickTestHelper(t, pipe, want)
+}
+
 func TestAlertHTTPPostMultipleHeaders(t *testing.T) {
 	pipe, _, from := StreamFrom()
 	handler := from.Alert().Post("")
@@ -538,12 +606,13 @@ func TestAlertHipchat(t *testing.T) {
 	PipelineTickTestHelper(t, pipe, want)
 }
 
-func TestAlertKafka(t *testing.T) {
+func TestAlertKafka_PartitionById(t *testing.T) {
 	pipe, _, from := StreamFrom()
 	handler := from.Alert().Kafka()
 	handler.Cluster = "default"
 	handler.KafkaTopic = "test"
 	handler.Template = "tmpl"
+	handler.PartitionHashAlgorithm = "murmur2"
 
 	want := `stream
     |from()
@@ -555,6 +624,31 @@ func TestAlertKafka(t *testing.T) {
         .kafka()
         .cluster('default')
         .kafkaTopic('test')
+        .partitionHashAlgorithm('murmur2')
+        .template('tmpl')
+`
+	PipelineTickTestHelper(t, pipe, want)
+}
+
+func TestAlertKafka_NoPartitionById(t *testing.T) {
+	pipe, _, from := StreamFrom()
+	handler := from.Alert().Kafka()
+	handler.Cluster = "default"
+	handler.KafkaTopic = "test"
+	handler.Template = "tmpl"
+	handler.IsDisablePartitionById = true
+
+	want := `stream
+    |from()
+    |alert()
+        .id('{{ .Name }}:{{ .Group }}')
+        .message('{{ .ID }} is {{ .Level }}')
+        .details('{{ json . }}')
+        .history(21)
+        .kafka()
+        .cluster('default')
+        .kafkaTopic('test')
+        .disablePartitionById()
         .template('tmpl')
 `
 	PipelineTickTestHelper(t, pipe, want)
@@ -711,6 +805,32 @@ func TestAlertSNMP(t *testing.T) {
         .snmpTrap('trap')
         .data('Petrov\'s Defence', 't', 'Marshall Trap')
         .data('Queen\'s Gambit Declined', 't', 'Rubinstein Trap')
+`
+	PipelineTickTestHelper(t, pipe, want)
+}
+
+func TestAlertZenoss(t *testing.T) {
+	pipe, _, from := StreamFrom()
+	handler := from.Alert().Zenoss()
+	handler.Action = "custom_add_event"
+	handler.Summary = "server alert"
+	handler.Device = "server-A"
+	handler.Component = "CPU"
+	handler.EventClass = "/App"
+
+	want := `stream
+    |from()
+    |alert()
+        .id('{{ .Name }}:{{ .Group }}')
+        .message('{{ .ID }} is {{ .Level }}')
+        .details('{{ json . }}')
+        .history(21)
+        .zenoss()
+        .action('custom_add_event')
+        .summary('server alert')
+        .device('server-A')
+        .component('CPU')
+        .eventClass('/App')
 `
 	PipelineTickTestHelper(t, pipe, want)
 }
